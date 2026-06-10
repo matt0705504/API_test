@@ -8,10 +8,10 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     .animate-fade-in {
-      animation: fadeIn 0.25s ease-out forwards;
+      animation: fadeIn 0.15s ease-out forwards;
     }
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(4px); }
+      from { opacity: 0; transform: translateY(3px); }
       to { opacity: 1; transform: translateY(0); }
     }
   </style>
@@ -19,7 +19,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (長對話緩衝版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (極速無重複版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -46,7 +46,7 @@
   </div>
 
   <script>
-    // 🔗 這裡已經填入你固定的 GAS 網頁應用程式 URL，無須再修改
+    // 🔗 固定的 GAS 網頁應用程式 URL
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbykYYBFOJrudwkIBQpNBFu_XegToC7nlYtJYnZigGanFHVlLIwj9syZdp-Cp4kO-BlA/exec"; 
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -62,9 +62,8 @@
     let googleTranslateTimer = null;
     let isTranslatingLock = false; 
 
-    // 🚀 緩衝區核心變數
-    let textBuffer = "";       // 當前還沒送去翻譯的語音累積緩衝區
-    let lastSentText = "";     // 記錄最後一次發送成功的文字快取
+    // 🚀 全新斷句流核心控制索引
+    let completedSegmentsCount = 0; // 記錄已經被官方斷句(isFinal)並成功發送的片段數量
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -72,64 +71,69 @@
       // 初始化語音辨識
       recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = true; 
+      recognition.interimResults = true; // 開啟即時回傳以更新畫面原文
 
       // 當辨識到語音時觸發
       recognition.onresult = function(event) {
-        let interimTranscript = '';
-        let finalTranscript = '';
+        if (placeholderText) placeholderText.remove();
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        let interimTranscript = '';
+        let hasNewFinal = false;
+        let latestFinalText = '';
+
+        // 檢查從我們上次處理完之後，有沒有誕生全新的「官方確定斷句(isFinal)」
+        for (let i = completedSegmentsCount; i < event.results.length; ++i) {
+          let phrase = event.results[i][0].transcript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g,"");
+          if (!phrase) continue;
+
           if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
+            latestFinalText = phrase;
+            // 標記抓到了真正的斷句節點
+            hasNewFinal = true; 
+            completedSegmentsCount = i + 1; // 更新索引，這個節點永遠不重複讀取
+            break; 
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            interimTranscript = phrase;
           }
         }
 
-        // 彙整最新完整字句，並清除所有的標點符號與前後空白
-        let currentText = (finalTranscript || interimTranscript).trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g,"");
+        // 優先發送官方判定的 Final 句子；如果還沒判定，就拿目前的 Interim 暫時字串
+        let textToSend = hasNewFinal ? latestFinalText : interimTranscript;
         
-        if (!currentText || currentText.length === 0) return;
-        if (placeholderText) placeholderText.remove();
+        if (!textToSend || textToSend.length === 0) return;
 
-        // 🚀 智慧滾動計算：算出扣除「已經翻過的舊字」之後，這一次講話新增加的內容是什麼
-        let newContent = currentText;
-        if (lastSentText && currentText.startsWith(lastSentText)) {
-          newContent = currentText.substring(lastSentText.length).trim();
-        }
+        // 實時在手機畫面上更新這句話（字會跟著同步跑）
+        updateLiveOriginalMessage(textToSend);
 
-        // 如果連新內容都是空的，代表講者還沒講出新東西，直接攔截
-        if (!newContent || newContent.length === 0) return;
-
-        // 實時更新畫面上最新尚未翻譯的原文
-        updateLiveOriginalMessage(newContent);
-
-        // 🚀 防火牆 1：字數緩衝強制切割機制 (Buffer Threshold)
-        // 如果新內容累積超過 40 個字，為了不讓翻譯卡死或太長，不等停頓，直接強制送出翻譯！
-        if (newContent.length >= 40) {
+        // 🚀 防火牆 1：如果官方提早判定斷句(isFinal)成立，立刻清除定時器，10毫秒內無延遲光速送翻！
+        if (hasNewFinal) {
           clearTimeout(googleTranslateTimer);
-          sendToTranslate(newContent, currentText);
+          sendToTranslate(textToSend);
           return;
         }
 
-        // 🚀 防火牆 2：時間防抖判定機制
-        // 如果還沒滿 40 個字，只要講者停頓超過 800 毫秒 (0.8秒)，就送出這段新累積的內容
+        // 🚀 防火牆 2：字數強切機制。如果講者一直不點頭斷句，但單句長度已經滿 25 個字，強切送翻
+        if (textToSend.length >= 25) {
+          clearTimeout(googleTranslateTimer);
+          completedSegmentsCount = event.results.length; // 將目前所有碎片標記為已處理，清空下一輪
+          sendToTranslate(textToSend);
+          return;
+        }
+
+        // 🚀 防火牆 3：時間防抖延遲。如果只是暫時結果(Interim)，停頓超過 450 毫秒(0.45秒)就認定說完送翻！
         clearTimeout(googleTranslateTimer);
         googleTranslateTimer = setTimeout(() => {
-          sendToTranslate(newContent, currentText);
-        }, 800); 
+          // 強切時間到，把當前這個節點視為已完成
+          completedSegmentsCount = event.results.length;
+          sendToTranslate(textToSend);
+        }, 450); // 💡 已調低至 450ms（極速狀態）
       };
 
       // 核心發送翻譯函式
-      function sendToTranslate(textToTranslate, fullTranscriptSoFar) {
+      function sendToTranslate(textToTranslate) {
         if (isTranslatingLock || !textToTranslate || textToTranslate.trim().length === 0) return;
 
         isTranslatingLock = true;
-        
-        // 🚀 更新快取鎖：把「到目前為止已經送去翻的內容」記錄起來，下一波語音進來時就會自動被扣除
-        lastSentText = fullTranscriptSoFar;
-
         const sourceLangShort = langSelect.value.split('-')[0]; 
         const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(textToTranslate)}&sourceLang=${sourceLangShort}`;
 
@@ -143,17 +147,17 @@
         })
         .then(response => {
           if (response.success) {
-            // 翻譯成功，固定當前這個緩衝原文框，並吐出新翻譯
+            // 翻譯成功，定格當前對話框，右側彈出繁中
             finalizeLiveMessage();
             appendMessage(response.translatedText, 'translated');
           }
         })
         .catch(err => {
-          console.error("緩衝連線失敗:", err);
+          console.error("連線失敗:", err);
         })
         .finally(() => {
-          // 🔓 短暫延遲解鎖，保持傳輸通道有序
-          setTimeout(() => { isTranslatingLock = false; }, 150);
+          // 發送完畢即刻開鎖
+          isTranslatingLock = false;
         });
       }
 
@@ -191,7 +195,7 @@
     function startListening() {
       isListening = true;
       recognition.lang = langSelect.value;
-      lastSentText = ""; 
+      completedSegmentsCount = 0; // 重設索引
       isTranslatingLock = false;
       try {
         recognition.start();
@@ -211,7 +215,7 @@
       btnIcon.innerText = "🎙️";
     }
 
-    // 輔助函式：用來即時更新畫面上「當前累積緩衝的原文」
+    // 輔助函式：即時更新畫面上尚未翻譯的原文
     function updateLiveOriginalMessage(text) {
       let lastMsg = chatBox.lastElementChild;
       if (lastMsg && lastMsg.classList.contains('is-live-original')) {
@@ -225,7 +229,7 @@
       chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // 輔助函式：當一句緩衝包翻譯完成，移除其 live 狀態
+    // 輔助函式：定格當前原文對話框
     function finalizeLiveMessage() {
       let lastMsg = chatBox.lastElementChild;
       if (lastMsg && lastMsg.classList.contains('is-live-original')) {
