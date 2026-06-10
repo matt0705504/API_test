@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>即時語音翻譯官</title>
+  <title>即時語音翻譯官 (Cloud STT 專業版)</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -14,7 +14,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (終極穩定不跳動版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (Cloud STT 專業版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -28,7 +28,7 @@
     <div class="flex-1 bg-white p-4 rounded-xl shadow-xs border border-slate-100 flex flex-col min-h-[350px]">
       <div class="flex-1 overflow-y-auto space-y-4 max-h-[65vh]" id="chatBox">
         <p id="placeholderText" class="text-slate-400 text-center text-sm mt-10">
-          💡 請確保使用 Safari 或 Chrome 開啟。<br>點擊下方按鈕開始說話！
+          💡 使用雲端專業級音訊辨識。<br>點擊下方按鈕並允許麥克風權限，即可開始對話！
         </p>
       </div>
     </div>
@@ -36,14 +36,14 @@
 
   <div class="w-full max-w-md mx-auto mt-4 sticky bottom-0 bg-slate-50 py-2">
     <button id="startBtn" class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98">
-      <span id="btnIcon">🎙️</span> <span id="btnText">開始聆聽</span>
+      <span id="btnIcon">🎙️</span> <span id="btnText">啟動麥克風聆聽</span>
     </button>
   </div>
 
   <script>
+    // 🔗 固定的 GAS 網頁應用程式 URL
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbykYYBFOJrudwkIBQpNBFu_XegToC7nlYtJYnZigGanFHVlLIwj9syZdp-Cp4kO-BlA/exec"; 
 
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const startBtn = document.getElementById('startBtn');
     const btnText = document.getElementById('btnText');
     const btnIcon = document.getElementById('btnIcon');
@@ -51,212 +51,182 @@
     const chatBox = document.getElementById('chatBox');
     const placeholderText = document.getElementById('placeholderText');
 
-    let recognition = null;
     let isListening = false;
-    let cutoffTimer = null; // 0.66秒精準斷句計時器
+    let mediaRecorder = null;
+    let audioChunks = [];
+    
+    // 智慧聲音偵測變數 (VAD)
+    let audioContext = null;
+    let analyser = null;
+    let javascriptNode = null;
+    let silenceTimer = null;
+    let isSpeaking = false;
 
-    // 🚀 快取記憶體
-    let lastSentRawText = ""; // 記錄上一句送出翻譯的完整原始文字
-    let textBuffer = "";      // 內部穩定的 Final 字串緩衝區
-
-    if (!SpeechRecognition) {
-      alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
-    } else {
-      recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true; // 保持開啟以維持高靈敏度斷句偵測
-
-      recognition.onresult = function(event) {
-        if (placeholderText) placeholderText.remove();
-
-        let finalTranscript = '';
-        let interimTranscript = '';
-
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
-        }
-
-        let cleanFinal = finalTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
-        let cleanInterim = interimTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
-
-        // 🌊 只有當語音確定（Final）時，才塞入穩定的內部存錢筒
-        if (cleanFinal.length > 0) {
-          textBuffer = (textBuffer + " " + cleanFinal).trim().replace(/\s+/g, " ");
-        }
-
-        // 🔒 【關鍵改動】：畫面上「只顯示」已經確定的 Final 文字串，完全不顯示臨時比對的 Interim 文字
-        let stableLiveSpeech = textBuffer;
-
-        // 如果在說話中，但底層還沒釋出任何 Final 節點，stableLiveSpeech 會是空的。
-        // 此時如果 interim 有字，代表使用者正在說話，我們仍要持續刷新「斷句計時器」，但「不更新畫面」，防止跳動！
-        let absoluteLiveText = (textBuffer + " " + cleanInterim).trim().replace(/\s+/g, " ");
-        if (!absoluteLiveText || absoluteLiveText.length === 0) return;
-
-        // 🗣️ 步驟 1：只有在有確定狀態的文字時才更新畫面，否則畫面保持絕對靜止不跳動
-        if (stableLiveSpeech.length > 0) {
-          updateLiveOriginalMessage(stableLiveSpeech);
-        }
-
-        // ⏱️ 0.66秒智慧斷句計時器
-        clearTimeout(cutoffTimer);
-        cutoffTimer = setTimeout(() => {
-          
-          // 📸 斷句時，不論有沒有被塞進 Final，我們都擷取這一瞬間最完整的總文字快照
-          let targetText = absoluteLiveText;
-          
-          // 🧠 前綴重疊完全裁切演算法
-          if (lastSentRawText.length > 0) {
-            let maxOverlapLen = 0;
-            let checkLimit = Math.min(lastSentRawText.length, targetText.length);
-
-            for (let i = 1; i <= checkLimit; i++) {
-              let prevChunk = lastSentRawText.substring(0, i).toLowerCase().trim();
-              let nextChunk = targetText.substring(0, i).toLowerCase().trim();
-              if (prevChunk === nextChunk) {
-                maxOverlapLen = i; 
-              } else {
-                break; 
-              }
-            }
-
-            if (maxOverlapLen > 0) {
-              console.log(`[強制切斷重疊] 發現前綴重合 ${maxOverlapLen} 個字元，強制裁切。`);
-              targetText = targetText.substring(maxOverlapLen).trim();
-            }
-          }
-
-          // 防呆：切完如果空了，代表是純重複訊號，直接捨棄不發送
-          if (!targetText || targetText.length === 0) {
-            textBuffer = "";
-            return;
-          }
-
-          // 🔒 更新記憶庫
-          lastSentRawText = absoluteLiveText;
-
-          // 🧹 清空緩衝區，準備迎接步驟 2 的下一段對話
-          textBuffer = "";
-
-          // 定格當前原文 HTML 節點，並補齊最終沒顯示到的剩餘字
-          const liveNode = finalizeLiveMessage(targetText);
-
-          // 步驟 2 & 3：丟給背景平行非同步送翻
-          sendToTranslate(targetText, liveNode);
-
-        }, 660); // 💡 精準縮短至 660 毫秒 = 0.66 秒停頓斷句
-      };
-
-      function sendToTranslate(textToTranslate, targetOriginalNode) {
-        if (!textToTranslate || textToTranslate.trim().length === 0) return;
-
-        const sourceLangShort = langSelect.value.split('-')[0]; 
-        const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(textToTranslate)}&sourceLang=${sourceLangShort}`;
-
-        fetch(targetUrl, {
-          method: "GET",
-          mode: "cors"
-        })
-        .then(res => {
-          if (!res.ok) throw new Error("網路回應不正常");
-          return res.json();
-        })
-        .then(response => {
-          if (response.success) {
-            appendMessageAfterNode(response.translatedText, targetOriginalNode);
-          }
-        })
-        .catch(err => {
-          console.error("背景翻譯失敗:", err);
-        });
-      }
-
-      recognition.onerror = function(event) {
-        console.error("語音辨識發生錯誤: ", event.error);
-        if (event.error === 'not-allowed') {
-          alert("麥克風存取遭拒，請至手機設定中確認瀏覽器麥克風權限已開啟。");
-          stopListening();
-        }
-      };
-
-      recognition.onend = function() {
-        if (isListening) {
-          try { recognition.start(); } catch(e) { console.log("重啟辨識中..."); }
-        }
-      };
-    }
+    // 音量分貝觸發門檻 (環境噪音大可稍微調高至 30)
+    const SILENCE_THRESHOLD = 25; 
+    const SILENCE_DURATION = 660; // 💡 講者安靜 0.66 秒立刻切斷斷句
 
     startBtn.addEventListener('click', () => {
-      if (!recognition) return;
-      if (!isListening) { startListening(); } else { stopListening(); }
+      if (!isListening) {
+        startAudioListening();
+      } else {
+        stopAudioListening();
+      }
     });
 
-    function startListening() {
-      isListening = true;
-      recognition.lang = langSelect.value;
-      textBuffer = ""; 
-      lastSentRawText = ""; 
+    async function startAudioListening() {
+      audioChunks = [];
       try {
-        recognition.start();
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // 1. 初始化底層高效錄音器
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunks.push(event.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          processAndSendAudio(); // 錄音停止時自動包裝發送
+        };
+
+        // 2. 初始化即時聲音頻率分析器 (VAD)
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+
+        javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+        analyser.connect(javascriptNode);
+        javascriptNode.connect(audioContext.destination);
+
+        // 每個人開口說話時，即時運算音量震幅
+        javascriptNode.onaudioprocess = () => {
+          const array = new Uint8Array(analyser.frequencyBinCount);
+          analyser.getByteFrequencyData(array);
+          let values = 0;
+          for (let i = 0; i < array.length; i++) { values += array[i]; }
+          const averageVolume = values / array.length;
+
+          if (averageVolume > SILENCE_THRESHOLD) {
+            if (!isSpeaking) {
+              isSpeaking = true;
+              if (mediaRecorder.state === "inactive") mediaRecorder.start(10);
+            }
+            clearTimeout(silenceTimer); // 說話中，持續重置這 0.66 秒的倒數計時
+          } else {
+            if (isSpeaking) {
+              clearTimeout(silenceTimer);
+              silenceTimer = setTimeout(() => {
+                isSpeaking = false;
+                if (mediaRecorder.state === "recording") {
+                  mediaRecorder.stop(); // 靜音滿 0.66 秒，直接下刀停錄！
+                }
+              }, SILENCE_DURATION);
+            }
+          }
+        };
+
+        isListening = true;
+        if (placeholderText) placeholderText.remove();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-        btnText.innerText = "正在聆聽、即時翻譯中...";
+        btnText.innerText = "正在聆聽 (0.66秒停頓自動送翻)...";
         btnIcon.innerText = "🛑";
-      } catch (e) {
-        console.error("啟動辨識失敗:", e);
+
+      } catch (err) {
+        console.error("無法取得麥克風權限:", err);
+        alert("請確認網頁是否擁有 HTTPS 安全憑證，並允許網頁使用麥克風。");
       }
     }
 
-    function stopListening() {
+    function stopAudioListening() {
       isListening = false;
-      recognition.stop();
+      clearTimeout(silenceTimer);
+      
+      if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+      if (javascriptNode) javascriptNode.disconnect();
+      if (audioContext) audioContext.close();
+
       startBtn.className = "w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-      btnText.innerText = "開始聆聽";
+      btnText.innerText = "啟動麥克風聆聽";
       btnIcon.innerText = "🎙️";
     }
 
-    function updateLiveOriginalMessage(text) {
-      let lastMsg = chatBox.lastElementChild;
-      if (lastMsg && lastMsg.classList.contains('is-live-original')) {
-        lastMsg.innerText = "🗣️ " + text;
-      } else {
-        const msgDiv = document.createElement('div');
-        msgDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-600 animate-fade-in is-live-original";
-        msgDiv.innerText = "🗣️ " + text;
-        chatBox.appendChild(msgDiv);
+    // 將錄好的獨立音訊片段轉為 Base64 並平行發送
+    function processAndSendAudio() {
+      if (audioChunks.length === 0) {
+        if (isListening && !isSpeaking) mediaRecorder.start(10);
+        return;
       }
+
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+      audioChunks = []; // 立即清空，防止雜訊重合
+
+      // 【無縫重啟機制】發送上一段聲音的同時，下一段錄音已經在後台悄悄啟動，絕不漏字
+      if (isListening && mediaRecorder.state === "inactive") {
+        mediaRecorder.start(10);
+      }
+
+      const reader = new FileReader();
+      reader.readAsDataURL(audioBlob);
+      reader.onloadend = function() {
+        const base64Data = reader.result.split(',')[1]; 
+        
+        // 畫面上先生成一個靜止的「辨識中」動態骨架，防畫面跳動
+        const loadingNode = createLoadingMessage();
+
+        // 平行發送 POST 請求交給 GAS 處理
+        fetch(GAS_WEB_APP_URL, {
+          method: "POST",
+          body: JSON.stringify({
+            audio: base64Data,
+            sourceLang: langSelect.value
+          })
+        })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            // 收到雲端傳回的精準原文與翻譯，優雅渲染
+            renderFinalDialogue(data.recognizedText, data.translatedText, loadingNode);
+          } else {
+            loadingNode.remove();
+            console.log("辨識為環境雜音或無有效字詞:", data.error);
+          }
+        })
+        .catch(err => {
+          loadingNode.remove();
+          console.error("連線到 GAS 後端失敗:", err);
+        });
+      };
+    }
+
+    function createLoadingMessage() {
+      const wrapper = document.createElement('div');
+      wrapper.className = "space-y-2 w-full animate-pulse";
+      wrapper.innerHTML = `
+        <div class="bg-slate-200 p-3 rounded-xl max-w-[50%] text-xs text-slate-400">🗣️ 雲端辨識中...</div>
+      `;
+      chatBox.appendChild(wrapper);
       chatBox.scrollTop = chatBox.scrollHeight;
+      return wrapper;
     }
 
-    function finalizeLiveMessage(finalCleanedText) {
-      let lastMsg = chatBox.lastElementChild;
-      if (lastMsg && lastMsg.classList.contains('is-live-original')) {
-        lastMsg.innerText = "🗣️ " + finalCleanedText; 
-        lastMsg.classList.remove('is-live-original');
-        return lastMsg;
-      } else {
-        // 如果此句此前完全沒觸發 Final 渲染（畫面一片空白），在斷句瞬間直接補建立一個完整乾淨的原文方塊
-        const msgDiv = document.createElement('div');
-        msgDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-600 animate-fade-in";
-        msgDiv.innerText = "🗣️ " + finalCleanedText;
-        chatBox.appendChild(msgDiv);
-        return msgDiv;
-      }
-    }
+    function renderFinalDialogue(originalText, translatedText, loadingNode) {
+      if (loadingNode) loadingNode.remove();
 
-    function appendMessageAfterNode(translatedText, originalNode) {
-      const msgDiv = document.createElement('div');
-      msgDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
-      msgDiv.innerText = "📳 " + translatedText;
-      
-      if (originalNode && originalNode.parentNode) {
-        originalNode.parentNode.insertBefore(msgDiv, originalNode.nextSibling);
-      } else {
-        chatBox.appendChild(msgDiv);
-      }
-      chatBox.scrollTop = chatBox.scrollHeight; 
+      // 原文對話框
+      const originalDiv = document.createElement('div');
+      originalDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-700 animate-fade-in";
+      originalDiv.innerText = "🗣️ " + originalText;
+      chatBox.appendChild(originalDiv);
+
+      // 譯文對話框
+      const translatedDiv = document.createElement('div');
+      translatedDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
+      translatedDiv.innerText = "📳 " + translatedText;
+      chatBox.appendChild(translatedDiv);
+
+      chatBox.scrollTop = chatBox.scrollHeight;
     }
   </script>
 </body>
