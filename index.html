@@ -19,7 +19,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (極速版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -47,7 +47,7 @@
 
   <script>
     // ⚠️ 請在下方雙引號內替換為您在 Google Apps Script 複製的最新網頁應用程式 URL（結尾必須是 /exec）
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycby_CGVuh2bccqFFgZE-GHq5yf2zZZek3JdZ7JcZC10A2QcXZ3fwxGCp5f4Jb-GUqsdQtQ/exec"; 
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbykYYBFOJrudwkIBQpNBFu_XegToC7nlYtJYnZigGanFHVlLIwj9syZdp-Cp4kO-BlA/exec"; 
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const startBtn = document.getElementById('startBtn');
@@ -59,6 +59,8 @@
 
     let recognition = null;
     let isListening = false;
+    let googleTranslateTimer = null;
+    let lastSentText = ""; // 避免重複發送相同字句
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -66,53 +68,68 @@
       // 初始化語音辨識
       recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = false;
+      // 🚀 開啟 interimResults，讓瀏覽器邊聽就邊把字吐出來，不等斷句了
+      recognition.interimResults = true; 
 
-      // 當辨識到語音時觸發
+      // 當辨識到語音時觸發（此模式下觸發頻率非常高）
       recognition.onresult = function(event) {
-        let resultIndex = event.resultIndex;
-        let originalText = event.results[resultIndex][0].transcript;
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        // 讀取並分類當前所有的辨識碎片
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+
+        // 彙整當前聽到的最新完整字句
+        let currentText = (finalTranscript || interimTranscript).trim();
         
-        // 🛠️ 關鍵防呆機制：如果辨識出空字串、純空白、或環境雜訊，直接過濾不送後端
-        if (!originalText || originalText.trim() === "" || originalText.trim().length === 0) {
-          console.log("偵測到無效空白句，已自動忽略。");
+        // 防呆：如果辨識出空字串，直接過濾
+        if (!currentText || currentText.length === 0) {
           return; 
         }
 
-        // 把前後空白清乾淨
-        originalText = originalText.trim();
+        if (placeholderText) placeholderText.remove();
 
-        // 畫面上顯示使用者說的原文
-        appendMessage(originalText, 'original');
+        // 🚀 實時更新畫面上使用者正在說的原文框（字會跟著同步跑）
+        updateLiveOriginalMessage(currentText);
         
-        // 取得語言代碼前兩碼 (例如 en-US -> en) 傳給後端
-        const sourceLangShort = langSelect.value.split('-')[0]; 
+        // 🚀 極速防抖翻譯發送邏輯
+        // 當使用者還在持續講話時，一直清除定時器；一旦說話停頓超過 600 毫秒 (0.6秒)，立刻送出翻譯！
+        clearTimeout(googleTranslateTimer);
+        googleTranslateTimer = setTimeout(() => {
+          
+          // 防呆：如果這一句跟上一句完全一樣，就不用重複送去翻譯
+          if (currentText === lastSentText) return;
+          lastSentText = currentText;
 
-        // 封裝標準安全 GET 網址
-        const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(originalText)}&sourceLang=${sourceLangShort}`;
+          const sourceLangShort = langSelect.value.split('-')[0]; 
+          const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(currentText)}&sourceLang=${sourceLangShort}`;
 
-        // 發送給 GAS 後端翻譯
-        fetch(targetUrl, {
-          method: "GET",
-          mode: "cors"
-        })
-        .then(res => {
-          if (!res.ok) throw new Error("網路回應不正常");
-          return res.json();
-        })
-        .then(response => {
-          if (response.success) {
-            // 成功：在畫面上印出繁體中文翻譯
-            appendMessage(response.translatedText, 'translated');
-          } else {
-            console.error("GAS 內部翻譯出錯:", response.error);
-          }
-        })
-        .catch(err => {
-          // 只有在真正斷網、網址填錯或後端死機時才會顯示錯誤，避免零星的空白請求造成閃退
-          console.error("連線發生異常:", err);
-          appendMessage("連線後端逾時或失敗，請檢查網路連線。", 'error');
-        });
+          fetch(targetUrl, {
+            method: "GET",
+            mode: "cors"
+          })
+          .then(res => {
+            if (!res.ok) throw new Error("網路回應不正常");
+            return res.json();
+          })
+          .then(response => {
+            if (response.success) {
+              // 翻譯成功，固定住當前的原文框，並在右側彈出繁中翻譯結果
+              finalizeLiveMessage();
+              appendMessage(response.translatedText, 'translated');
+            }
+          })
+          .catch(err => {
+            console.error("即時連線失敗:", err);
+          });
+
+        }, 600); // 💡 600 毫秒 = 0.6 秒。如果希望快到一講完就送，可以改成 400 或 500
       };
 
       // 錯誤處理
@@ -124,7 +141,7 @@
         }
       };
 
-      // 自動重啟機制（避免手機講完一句太久沒說話自動斷開）
+      // 自動重啟機制
       recognition.onend = function() {
         if (isListening) {
           try {
@@ -149,12 +166,12 @@
     function startListening() {
       isListening = true;
       recognition.lang = langSelect.value;
+      lastSentText = ""; // 清空快取
       try {
         recognition.start();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
         btnText.innerText = "正在聆聽、即時翻譯中...";
         btnIcon.innerText = "🛑";
-        if (placeholderText) placeholderText.remove();
       } catch (e) {
         console.error("啟動辨識失敗:", e);
       }
@@ -168,13 +185,34 @@
       btnIcon.innerText = "🎙️";
     }
 
-    // 在畫面上產生對話對話框
+    // 輔助函式：用來即時更新畫面上「正在說的原文」
+    function updateLiveOriginalMessage(text) {
+      let lastMsg = chatBox.lastElementChild;
+      // 如果最後一個元素是正在打字/說話的原文，直接更新文字內容
+      if (lastMsg && lastMsg.classList.contains('is-live-original')) {
+        lastMsg.innerText = "🗣️ " + text;
+      } else {
+        // 否則，新建一個帶有特殊標記的原文對話框
+        const msgDiv = document.createElement('div');
+        msgDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-600 animate-fade-in is-live-original";
+        msgDiv.innerText = "🗣️ " + text;
+        chatBox.appendChild(msgDiv);
+      }
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    // 輔助函式：當一句話翻譯完成，移除其 live 狀態，以便下一句話能開啟新的對話框
+    function finalizeLiveMessage() {
+      let lastMsg = chatBox.lastElementChild;
+      if (lastMsg && lastMsg.classList.contains('is-live-original')) {
+        lastMsg.classList.remove('is-live-original');
+      }
+    }
+
+    // 在畫面上產生右側翻譯對話框
     function appendMessage(text, type) {
       const msgDiv = document.createElement('div');
-      if (type === 'original') {
-        msgDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-600 animate-fade-in";
-        msgDiv.innerText = "🗣️ " + text;
-      } else if (type === 'translated') {
+      if (type === 'translated') {
         msgDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
         msgDiv.innerText = "📳 " + text;
       } else {
