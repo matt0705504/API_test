@@ -14,7 +14,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (比例重疊過濾版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (前綴重疊完全裁切版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -55,9 +55,9 @@
     let isListening = false;
     let oneSecondTimer = null; 
 
-    // 🚀 核心快取變數
-    let lastSentRawText = ""; // 完整記錄上一句成功發送的「原始原文」
-    let textBuffer = "";      // 乾淨的內部累積緩衝區
+    // 🚀 快取記憶體
+    let lastSentRawText = ""; // 記錄上一句送出翻譯的完整原始文字
+    let textBuffer = "";      // 內部緩衝區
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -99,54 +99,48 @@
           
           let targetText = currentLiveSpeech;
           
-          // 🧠 2. 核心演算法：60% 最大前綴重疊比對過濾器
+          // 🧠 【核心改動】：只要開頭有任何重合，二話不說直接切斷，不計較百分比
           if (lastSentRawText.length > 0) {
             let maxOverlapLen = 0;
             let checkLimit = Math.min(lastSentRawText.length, targetText.length);
 
-            // 從新句子的第 1 個字開始，逐字往後對齊舊句子的開頭
+            // 逐字比對新舊句子的開頭前綴
             for (let i = 1; i <= checkLimit; i++) {
-              let prevChunk = lastSentRawText.substring(0, i).toLowerCase();
-              let nextChunk = targetText.substring(0, i).toLowerCase();
+              let prevChunk = lastSentRawText.substring(0, i).toLowerCase().trim();
+              let nextChunk = targetText.substring(0, i).toLowerCase().trim();
               if (prevChunk === nextChunk) {
-                maxOverlapLen = i; // 記錄目前最大重合的字數長度
+                maxOverlapLen = i; // 只要一樣，就一直往後記錄重疊的最大長度
               } else {
-                break; // 一旦有任何一字對不上，代表前綴重疊到此為止
+                break; // 一旦字眼分道揚鑣，立刻中斷
               }
             }
 
             if (maxOverlapLen > 0) {
-              // 計算重複內容佔「新句子」的比例
-              let overlapRatio = maxOverlapLen / targetText.length;
-              
-              // 🛑 如果從頭開始重複超過 60% (0.6)
-              if (overlapRatio >= 0.60) {
-                console.log(`[攔截防重複] 重合字數: ${maxOverlapLen}, 比例: ${(overlapRatio*100).toFixed(1)}%。執行裁切！`);
-                // 喀擦！切掉前 60% 相同的舊字，只保留後面全新的 40%
-                targetText = targetText.substring(maxOverlapLen).trim();
-              }
+              console.log(`[強制切斷重疊] 發現前綴重合 ${maxOverlapLen} 個字元，執行強制全段裁切。`);
+              // ✂️ 直接切掉跟上一句重複的所有開頭，只留真正全新長出來的後半句
+              targetText = targetText.substring(maxOverlapLen).trim();
             }
           }
 
-          // 防呆：如果切完之後根本沒剩下東西，代表是 100% 灌水的重複訊號，直接捨棄不送翻
+          // 防呆：切完如果空了，代表完全是上一句的重播殘留，直接捨棄不發送
           if (!targetText || targetText.length === 0) {
             textBuffer = "";
             return;
           }
 
-          // 🔒 3. 更新記憶庫：把「這次未裁切前的大水庫」存為下一輪的比對歷史
+          // 🔒 更新記憶庫：記住這次未裁切前的總字串，供下一輪比對
           lastSentRawText = currentLiveSpeech;
 
           // 🧹 清空緩衝區，準備迎接步驟 2 的下一段對話
           textBuffer = "";
 
-          // 定格當前原文 HTML 節點，交給非同步執行緒
+          // 定格當前原文 HTML 節點
           const liveNode = finalizeLiveMessage(targetText);
 
           // 步驟 2 & 3：丟給背景平行非同步送翻
           sendToTranslate(targetText, liveNode);
 
-        }, 1000); // 精準 1 秒停頓
+        }, 1000); // 1.0 秒停頓斷句
       };
 
       function sendToTranslate(textToTranslate, targetOriginalNode) {
@@ -165,7 +159,6 @@
         })
         .then(response => {
           if (response.success) {
-            // 背景平行編譯好了就彈出來，插在對應原文正下方
             appendMessageAfterNode(response.translatedText, targetOriginalNode);
           }
         })
@@ -230,11 +223,10 @@
       chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // 定格當前原文框，如果發生裁切，同步修正畫面上顯示的文字，讓視覺與發送內容一致
     function finalizeLiveMessage(finalCleanedText) {
       let lastMsg = chatBox.lastElementChild;
       if (lastMsg && lastMsg.classList.contains('is-live-original')) {
-        lastMsg.innerText = "🗣️ " + finalCleanedText; // 畫面上同步更新為剪裁後的純淨新文字
+        lastMsg.innerText = "🗣️ " + finalCleanedText; 
         lastMsg.classList.remove('is-live-original');
         return lastMsg;
       }
