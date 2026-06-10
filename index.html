@@ -8,7 +8,7 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     .animate-fade-in {
-      animation: fadeIn 0.2s ease-out forwards;
+      animation: fadeIn 0.15s ease-out forwards;
     }
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(4px); }
@@ -19,7 +19,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (非同步平行緩衝版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (500ms極速無重複版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -59,10 +59,10 @@
 
     let recognition = null;
     let isListening = false;
-    let oneSecondTimer = null; // 1秒智慧斷句計時器
+    let halfSecondTimer = null; // 0.5秒極速計時器
 
-    // 🚀 核心大水庫快取變數
-    let lastSentText = ""; // 紀錄「上一次斷句時」大水庫累積到了哪裡
+    // 🚀 核心雙快照變數
+    let lastSentText = ""; // 紀錄上一句送出翻譯的完整原始文字
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -70,7 +70,7 @@
       // 初始化語音辨識
       recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = true; // 開啟暫時辨識，允許字體同步更新
+      recognition.interimResults = true; 
 
       // 當辨識到語音時觸發
       recognition.onresult = function(event) {
@@ -79,7 +79,7 @@
         let finalTranscript = '';
         let interimTranscript = '';
 
-        // 1. 🌊 大水庫機制：永遠從第 0 格開始讀取最完整的語音總軌，絕對不手動切斷
+        // 永遠讀取大水庫總軌
         for (let i = 0; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript;
@@ -88,52 +88,66 @@
           }
         }
 
-        // 清理標點符號，將當前整軌合併為一個總串流
+        // 清理標點符號，整軌合併
         let fullSessionText = (finalTranscript + " " + interimTranscript).trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
-        fullSessionText = fullSessionText.replace(/\s+/g, " "); // 清除多餘空格
+        fullSessionText = fullSessionText.replace(/\s+/g, " "); 
 
         if (!fullSessionText || fullSessionText.length === 0) return;
 
-        // 2. 🧮 減法切片：當前總文字 扣掉 上次已經斷句送翻的舊文字 = 這一段正在說的「新緩衝區內容」
+        // 🧮 智慧重疊過濾演算法：精準抓出「真正全新」的文字內容
         let newBufferContent = fullSessionText;
-        if (lastSentText && fullSessionText.startsWith(lastSentText)) {
-          newBufferContent = fullSessionText.substring(lastSentText.length).trim();
+        if (lastSentText) {
+          if (fullSessionText.startsWith(lastSentText)) {
+            // 標準切片
+            newBufferContent = fullSessionText.substring(lastSentText.length).trim();
+          } else {
+            // 🔍 容錯防重複機制：如果因為手機瀏覽器微調導致開頭對不上，利用滑動視窗比對尾巴與開頭的交集
+            let overlapLength = 0;
+            let maxCheckLength = Math.min(lastSentText.length, fullSessionText.length);
+            for (let len = 1; len <= maxCheckLength; len++) {
+              let suffix = lastSentText.slice(-len);
+              let prefix = fullSessionText.slice(0, len);
+              if (suffix.toLowerCase() === prefix.toLowerCase()) {
+                overlapLength = len;
+              }
+            }
+            if (overlapLength > 0) {
+              newBufferContent = fullSessionText.substring(overlapLength).trim();
+            }
+          }
         }
 
-        // 如果連新內容都沒有，代表講者還沒講話，直接回傳
+        // 如果過濾完重複字後，根本沒有新字，就攔截不動作
         if (!newBufferContent || newBufferContent.length === 0) return;
 
-        // 3. 🗣️ 即時更新畫面原文：左側灰色框框會隨著講者說話，非常流暢且完全同步地長大
+        // 🗣️ 即時在畫面上更新這一段「全新收集到」的原文
         updateLiveOriginalMessage(newBufferContent);
 
-        // 4. ⏱️ 1秒斷句計時器
-        // 講者在講話時，計時器會被狂刷清除；一旦閉嘴安靜滿 1.0 秒，立刻下刀
-        clearTimeout(oneSecondTimer);
-        oneSecondTimer = setTimeout(() => {
+        // ⏱️ 0.5 秒智慧斷句計時器
+        clearTimeout(halfSecondTimer);
+        halfSecondTimer = setTimeout(() => {
           
-          // 📸 擷取這一瞬間的切片快照，打包準備丟給背景翻譯
           const textToTranslate = newBufferContent;
           
-          // 🔒 丟翻譯的同時（步驟2），水位線立刻往前推，下一個字進來時會自動從下一段緩衝開始計算，絕不漏字！
+          // 🔒 推送水位線，準備迎接下一段非同步收集
           lastSentText = fullSessionText;
 
-          // 建立一個專屬於這段話的畫面原生節點（固定住它，不讓接下來的話覆蓋它）
+          // 定格當前原文框並交付綁定
           const liveNode = finalizeLiveMessage();
 
-          // 非同步發送：丟給背景持續作業
+          // 背景非同步平行發送翻譯
           sendToTranslate(textToTranslate, liveNode);
 
-        }, 1000); // 精準 1.0 秒停頓
+        }, 500); // 💡 精準縮短成 500 毫秒 = 0.5 秒停頓斷句
       };
 
-      // 核心發送翻譯函式 (帶有閉包節點鎖，確保多個後端並行回傳時，能各自對齊自己的位置)
+      // 核心發送翻譯函式 (閉包節點鎖)
       function sendToTranslate(textToTranslate, targetOriginalNode) {
         if (!textToTranslate || textToTranslate.trim().length === 0) return;
 
         const sourceLangShort = langSelect.value.split('-')[0]; 
         const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(textToTranslate)}&sourceLang=${sourceLangShort}`;
 
-        // 背景非同步處理 fetch，即使同時有 2-3 個翻譯在跑，誰先好誰就先蹦出來
         fetch(targetUrl, {
           method: "GET",
           mode: "cors"
@@ -144,12 +158,12 @@
         })
         .then(response => {
           if (response.success) {
-            // 步驟3：翻譯完成後，立即將其在右側顯示出來，完全不影響此時正在收集的下一段內容
+            // 背景作業完成後彈出，完美插入對應位置
             appendMessageAfterNode(response.translatedText, targetOriginalNode);
           }
         })
         .catch(err => {
-          console.error("背景翻譯失敗:", err);
+          console.error("背景連線失敗:", err);
         });
       }
 
@@ -187,7 +201,7 @@
     function startListening() {
       isListening = true;
       recognition.lang = langSelect.value;
-      lastSentText = ""; // 重設水位線
+      lastSentText = ""; // 清空水位線
       try {
         recognition.start();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
@@ -220,7 +234,7 @@
       chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    // 輔助函式：定格當前的原文對話框，並把它傳出去給背景翻譯綁定
+    // 輔助函式：定格當前的原文對話框
     function finalizeLiveMessage() {
       let lastMsg = chatBox.lastElementChild;
       if (lastMsg && lastMsg.classList.contains('is-live-original')) {
@@ -230,17 +244,15 @@
       return null;
     }
 
-    // 輔助函式：精準將翻譯結果插在該段原文的下方（解決非同步連線可能產生的先後順序錯亂問題）
+    // 輔助函式：將翻譯結果插在該段原文的下方
     function appendMessageAfterNode(translatedText, originalNode) {
       const msgDiv = document.createElement('div');
       msgDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
       msgDiv.innerText = "📳 " + translatedText;
       
       if (originalNode && originalNode.parentNode) {
-        // 插在對應的原文字框後面
         originalNode.parentNode.insertBefore(msgDiv, originalNode.nextSibling);
       } else {
-        // 防呆備用方案：如果找不到節點就塞在最後面
         chatBox.appendChild(msgDiv);
       }
       chatBox.scrollTop = chatBox.scrollHeight; 
