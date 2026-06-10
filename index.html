@@ -19,7 +19,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (索引隔離極速版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (不倒翁獨立緩衝版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -59,10 +59,10 @@
 
     let recognition = null;
     let isListening = false;
-    let halfSecondTimer = null; // 0.5秒斷句計時器
+    let halfSecondTimer = null; // 0.5秒極速斷句計時器
 
-    // 🚀 【核心指標】控制大水庫陣列的起始讀取格數，從源頭隔離舊資料
-    let nextStartIndex = 0; 
+    // 🚀 【獨立存錢筒變數】不受瀏覽器底層影響，專門用來安全累積文字
+    let textBuffer = ""; 
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -76,40 +76,54 @@
       recognition.onresult = function(event) {
         if (placeholderText) placeholderText.remove();
 
-        let currentSegmentText = "";
+        let finalTranscript = '';
+        let interimTranscript = '';
 
-        // 🔒 鐵律：永遠只讀取 nextStartIndex 之後的新格子，徹底無視前面已經翻譯完的老格子
-        for (let i = nextStartIndex; i < event.results.length; ++i) {
-          currentSegmentText += event.results[i][0].transcript;
+        // 分離穩定結果（Final）與暫時結果（Interim）
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
         }
 
-        // 清理標點符號與前後空白
-        let cleanText = currentSegmentText.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
-        cleanText = cleanText.replace(/\s+/g, " ").trim(); 
+        // 清理標點符號
+        let cleanFinal = finalTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
+        let cleanInterim = interimTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
 
-        // 如果這段區間內還沒有任何有效新字，直接攔截
-        if (!cleanText || cleanText.length === 0) return;
+        // 🌊 把瀏覽器剛生出來的確定文字（Final），安全累積進我們自己的存錢筒
+        if (cleanFinal.length > 0) {
+          // 確保文字銜接時有空格
+          textBuffer = (textBuffer + " " + cleanFinal).trim().replace(/\s+/g, " ");
+        }
 
-        // 🗣️ 即時在手機網頁上更新顯示這一大段「當前真正全新累積」的原文
-        updateLiveOriginalMessage(cleanText);
+        // 當前畫面上要呈現的，是「已經確定的存錢筒字串」＋「正在講的暫時字串」
+        let currentLiveSpeech = (textBuffer + " " + cleanInterim).trim().replace(/\s+/g, " ");
+
+        if (!currentLiveSpeech || currentLiveSpeech.length === 0) return;
+
+        // 🗣️ 即時在畫面上更新最新累積原文（絕對不會消失不見）
+        updateLiveOriginalMessage(currentLiveSpeech);
 
         // ⏱️ 0.5 秒智慧斷句計時器
+        // 只要還在說話，計時器就會被瘋狂重置；一旦完全安靜 0.5 秒，立刻收網！
         clearTimeout(halfSecondTimer);
         halfSecondTimer = setTimeout(() => {
           
-          const textToTranslate = cleanText;
+          // 📸 把目前存錢筒＋暫時文字拼起來，當作這句完整對白的最終快照
+          const textToTranslate = currentLiveSpeech;
           
-          // 🔒 【最關鍵鎖定】：將指標直接往前推到當前的總長度！
-          // 下一秒講者開口時，上面的 for 迴圈就會從當前這一格之後全新開始，舊格子被永久封鎖。
-          nextStartIndex = event.results.length;
+          // 🔒 【無縫清空】：存錢筒立刻歸零，下一句進來的語音會從頭收集，絕不與舊字重疊！
+          textBuffer = "";
 
-          // 固定住畫面上這段原文的 HTML 節點，用作非同步綁定
+          // 固定當前畫面的原文對話框 HTML 節點，用於多軌非同步綁定
           const liveNode = finalizeLiveMessage();
 
           // 背景平行非同步送翻
           sendToTranslate(textToTranslate, liveNode);
 
-        }, 500); // 精準 500 毫秒 = 0.5 秒停頓
+        }, 500); // 0.5 秒極速斷句
       };
 
       // 核心發送翻譯函式 (閉包節點鎖)
@@ -129,7 +143,7 @@
         })
         .then(response => {
           if (response.success) {
-            // 翻譯成功，不干擾新段落，精準插在對應原文下方
+            // 背景平行翻譯完成，精準吐在對應原文下方
             appendMessageAfterNode(response.translatedText, targetOriginalNode);
           }
         })
@@ -172,7 +186,7 @@
     function startListening() {
       isListening = true;
       recognition.lang = langSelect.value;
-      nextStartIndex = 0; // 開始聆聽時重設指標
+      textBuffer = ""; // 開始聆聽時清空存錢筒
       try {
         recognition.start();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
