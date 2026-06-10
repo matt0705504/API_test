@@ -8,10 +8,10 @@
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     .animate-fade-in {
-      animation: fadeIn 0.15s ease-out forwards;
+      animation: fadeIn 0.2s ease-out forwards;
     }
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(3px); }
+      from { opacity: 0; transform: translateY(4px); }
       to { opacity: 1; transform: translateY(0); }
     }
   </style>
@@ -19,7 +19,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (極速無重複版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (滑動流暢版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -60,10 +60,10 @@
     let recognition = null;
     let isListening = false;
     let googleTranslateTimer = null;
-    let isTranslatingLock = false; 
 
-    // 🚀 全新斷句流核心控制索引
-    let completedSegmentsCount = 0; // 記錄已經被官方斷句(isFinal)並成功發送的片段數量
+    // 🚀 滑動視窗快取變數
+    let lastSentText = "";       // 紀錄上一次真正送出翻譯的「完整原文總串」
+    let currentSessionText = ""; // 紀錄當前整段對話累積下來的總純文字
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -71,71 +71,67 @@
       // 初始化語音辨識
       recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = true; // 開啟即時回傳以更新畫面原文
+      recognition.interimResults = true; // 保持極速回傳，畫面字體流暢更新
 
       // 當辨識到語音時觸發
       recognition.onresult = function(event) {
         if (placeholderText) placeholderText.remove();
 
         let interimTranscript = '';
-        let hasNewFinal = false;
-        let latestFinalText = '';
+        let finalTranscript = '';
 
-        // 檢查從我們上次處理完之後，有沒有誕生全新的「官方確定斷句(isFinal)」
-        for (let i = completedSegmentsCount; i < event.results.length; ++i) {
-          let phrase = event.results[i][0].transcript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g,"");
-          if (!phrase) continue;
-
+        // 完整讀取當前軌道內的所有文字，絕不丟棄任何碎片
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
-            latestFinalText = phrase;
-            // 標記抓到了真正的斷句節點
-            hasNewFinal = true; 
-            completedSegmentsCount = i + 1; // 更新索引，這個節點永遠不重複讀取
-            break; 
+            finalTranscript += event.results[i][0].transcript;
           } else {
-            interimTranscript = phrase;
+            interimTranscript += event.results[i][0].transcript;
           }
         }
 
-        // 優先發送官方判定的 Final 句子；如果還沒判定，就拿目前的 Interim 暫時字串
-        let textToSend = hasNewFinal ? latestFinalText : interimTranscript;
+        // 清理標點符號，保留純文字內容
+        let cleanFinal = finalTranscript.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
+        let cleanInterim = interimTranscript.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
         
-        if (!textToSend || textToSend.length === 0) return;
+        // 彙整出當前不中斷的總文字量
+        currentSessionText = (cleanFinal + " " + cleanInterim).trim().replace(/\s+/g, " ");
 
-        // 實時在手機畫面上更新這句話（字會跟著同步跑）
-        updateLiveOriginalMessage(textToSend);
+        if (!currentSessionText || currentSessionText.length === 0) return;
 
-        // 🚀 防火牆 1：如果官方提早判定斷句(isFinal)成立，立刻清除定時器，10毫秒內無延遲光速送翻！
-        if (hasNewFinal) {
+        // 1. 🚀 畫面原文同步顯示：切出「尚未翻譯的新內容」顯示在畫面上，體感完全不卡頓
+        let displayLiveText = currentSessionText;
+        if (lastSentText && currentSessionText.startsWith(lastSentText)) {
+          displayLiveText = currentSessionText.substring(lastSentText.length).trim();
+        }
+        if (displayLiveText.length > 0) {
+          updateLiveOriginalMessage(displayLiveText);
+        }
+
+        // 2. 🚀 滑動增量判定：如果講者一直講，新增加的字數一滿 12 個字，立刻自動切片送翻
+        if (displayLiveText.length >= 12) {
           clearTimeout(googleTranslateTimer);
-          sendToTranslate(textToSend);
+          sendToTranslate(displayLiveText, currentSessionText);
           return;
         }
 
-        // 🚀 防火牆 2：字數強切機制。如果講者一直不點頭斷句，但單句長度已經滿 25 個字，強切送翻
-        if (textToSend.length >= 25) {
-          clearTimeout(googleTranslateTimer);
-          completedSegmentsCount = event.results.length; // 將目前所有碎片標記為已處理，清空下一輪
-          sendToTranslate(textToSend);
-          return;
-        }
-
-        // 🚀 防火牆 3：時間防抖延遲。如果只是暫時結果(Interim)，停頓超過 450 毫秒(0.45秒)就認定說完送翻！
+        // 3. 🚀 安全時間判定：如果新字還沒滿 12 個字，但講者停頓超過 750 毫秒 (0.75秒)，也送出翻譯
         clearTimeout(googleTranslateTimer);
         googleTranslateTimer = setTimeout(() => {
-          // 強切時間到，把當前這個節點視為已完成
-          completedSegmentsCount = event.results.length;
-          sendToTranslate(textToSend);
-        }, 450); // 💡 已調低至 450ms（極速狀態）
+          if (displayLiveText.length > 0) {
+            sendToTranslate(displayLiveText, currentSessionText);
+          }
+        }, 750); 
       };
 
       // 核心發送翻譯函式
-      function sendToTranslate(textToTranslate) {
-        if (isTranslatingLock || !textToTranslate || textToTranslate.trim().length === 0) return;
+      function sendToTranslate(textToTranslate, fullSnapshot) {
+        if (!textToTranslate || textToTranslate.trim().length === 0) return;
 
-        isTranslatingLock = true;
+        // 🚀 關鍵同步鎖：立刻拉高水位線，避免下個 fetch 重複送出相同區段
+        lastSentText = fullSnapshot;
+
         const sourceLangShort = langSelect.value.split('-')[0]; 
-        const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(textToTranslate)}&sourceLang=${sourceLangShort}`;
+        const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(textToTranslate.trim())}&sourceLang=${sourceLangShort}`;
 
         fetch(targetUrl, {
           method: "GET",
@@ -147,17 +143,13 @@
         })
         .then(response => {
           if (response.success) {
-            // 翻譯成功，定格當前對話框，右側彈出繁中
+            // 翻譯成功，定格畫面原文框，輸出翻譯
             finalizeLiveMessage();
             appendMessage(response.translatedText, 'translated');
           }
         })
         .catch(err => {
-          console.error("連線失敗:", err);
-        })
-        .finally(() => {
-          // 發送完畢即刻開鎖
-          isTranslatingLock = false;
+          console.error("連線發送失敗:", err);
         });
       }
 
@@ -195,8 +187,8 @@
     function startListening() {
       isListening = true;
       recognition.lang = langSelect.value;
-      completedSegmentsCount = 0; // 重設索引
-      isTranslatingLock = false;
+      lastSentText = ""; 
+      currentSessionText = "";
       try {
         recognition.start();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
