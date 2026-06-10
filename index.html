@@ -19,7 +19,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (500ms極速無重複版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (索引隔離極速版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -59,10 +59,10 @@
 
     let recognition = null;
     let isListening = false;
-    let halfSecondTimer = null; // 0.5秒極速計時器
+    let halfSecondTimer = null; // 0.5秒斷句計時器
 
-    // 🚀 核心雙快照變數
-    let lastSentText = ""; // 紀錄上一句送出翻譯的完整原始文字
+    // 🚀 【核心指標】控制大水庫陣列的起始讀取格數，從源頭隔離舊資料
+    let nextStartIndex = 0; 
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -76,69 +76,40 @@
       recognition.onresult = function(event) {
         if (placeholderText) placeholderText.remove();
 
-        let finalTranscript = '';
-        let interimTranscript = '';
+        let currentSegmentText = "";
 
-        // 永遠讀取大水庫總軌
-        for (let i = 0; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          } else {
-            interimTranscript += event.results[i][0].transcript;
-          }
+        // 🔒 鐵律：永遠只讀取 nextStartIndex 之後的新格子，徹底無視前面已經翻譯完的老格子
+        for (let i = nextStartIndex; i < event.results.length; ++i) {
+          currentSegmentText += event.results[i][0].transcript;
         }
 
-        // 清理標點符號，整軌合併
-        let fullSessionText = (finalTranscript + " " + interimTranscript).trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
-        fullSessionText = fullSessionText.replace(/\s+/g, " "); 
+        // 清理標點符號與前後空白
+        let cleanText = currentSegmentText.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
+        cleanText = cleanText.replace(/\s+/g, " ").trim(); 
 
-        if (!fullSessionText || fullSessionText.length === 0) return;
+        // 如果這段區間內還沒有任何有效新字，直接攔截
+        if (!cleanText || cleanText.length === 0) return;
 
-        // 🧮 智慧重疊過濾演算法：精準抓出「真正全新」的文字內容
-        let newBufferContent = fullSessionText;
-        if (lastSentText) {
-          if (fullSessionText.startsWith(lastSentText)) {
-            // 標準切片
-            newBufferContent = fullSessionText.substring(lastSentText.length).trim();
-          } else {
-            // 🔍 容錯防重複機制：如果因為手機瀏覽器微調導致開頭對不上，利用滑動視窗比對尾巴與開頭的交集
-            let overlapLength = 0;
-            let maxCheckLength = Math.min(lastSentText.length, fullSessionText.length);
-            for (let len = 1; len <= maxCheckLength; len++) {
-              let suffix = lastSentText.slice(-len);
-              let prefix = fullSessionText.slice(0, len);
-              if (suffix.toLowerCase() === prefix.toLowerCase()) {
-                overlapLength = len;
-              }
-            }
-            if (overlapLength > 0) {
-              newBufferContent = fullSessionText.substring(overlapLength).trim();
-            }
-          }
-        }
-
-        // 如果過濾完重複字後，根本沒有新字，就攔截不動作
-        if (!newBufferContent || newBufferContent.length === 0) return;
-
-        // 🗣️ 即時在畫面上更新這一段「全新收集到」的原文
-        updateLiveOriginalMessage(newBufferContent);
+        // 🗣️ 即時在手機網頁上更新顯示這一大段「當前真正全新累積」的原文
+        updateLiveOriginalMessage(cleanText);
 
         // ⏱️ 0.5 秒智慧斷句計時器
         clearTimeout(halfSecondTimer);
         halfSecondTimer = setTimeout(() => {
           
-          const textToTranslate = newBufferContent;
+          const textToTranslate = cleanText;
           
-          // 🔒 推送水位線，準備迎接下一段非同步收集
-          lastSentText = fullSessionText;
+          // 🔒 【最關鍵鎖定】：將指標直接往前推到當前的總長度！
+          // 下一秒講者開口時，上面的 for 迴圈就會從當前這一格之後全新開始，舊格子被永久封鎖。
+          nextStartIndex = event.results.length;
 
-          // 定格當前原文框並交付綁定
+          // 固定住畫面上這段原文的 HTML 節點，用作非同步綁定
           const liveNode = finalizeLiveMessage();
 
-          // 背景非同步平行發送翻譯
+          // 背景平行非同步送翻
           sendToTranslate(textToTranslate, liveNode);
 
-        }, 500); // 💡 精準縮短成 500 毫秒 = 0.5 秒停頓斷句
+        }, 500); // 精準 500 毫秒 = 0.5 秒停頓
       };
 
       // 核心發送翻譯函式 (閉包節點鎖)
@@ -158,7 +129,7 @@
         })
         .then(response => {
           if (response.success) {
-            // 背景作業完成後彈出，完美插入對應位置
+            // 翻譯成功，不干擾新段落，精準插在對應原文下方
             appendMessageAfterNode(response.translatedText, targetOriginalNode);
           }
         })
@@ -201,7 +172,7 @@
     function startListening() {
       isListening = true;
       recognition.lang = langSelect.value;
-      lastSentText = ""; // 清空水位線
+      nextStartIndex = 0; // 開始聆聽時重設指標
       try {
         recognition.start();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
