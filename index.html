@@ -19,7 +19,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (極速版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (極速防重複版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -61,6 +61,7 @@
     let isListening = false;
     let googleTranslateTimer = null;
     let lastSentText = ""; // 避免重複發送相同字句
+    let isTranslatingLock = false; // 🔒 發送鎖：確保前一發還在處理時，不重複塞車發送
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
@@ -68,10 +69,10 @@
       // 初始化語音辨識
       recognition = new SpeechRecognition();
       recognition.continuous = true;
-      // 🚀 開啟 interimResults，讓瀏覽器邊聽就邊把字吐出來，不等斷句了
+      // 開啟 interimResults，讓瀏覽器邊聽就邊把字吐出來
       recognition.interimResults = true; 
 
-      // 當辨識到語音時觸發（此模式下觸發頻率非常高）
+      // 當辨識到語音時觸發
       recognition.onresult = function(event) {
         let interimTranscript = '';
         let finalTranscript = '';
@@ -85,26 +86,34 @@
           }
         }
 
-        // 彙整當前聽到的最新完整字句
-        let currentText = (finalTranscript || interimTranscript).trim();
+        // 彙整最新完整字句，並清除所有的標點符號與前後空白（徹底解決因校正產生標點符號而產生的重複問題）
+        let currentText = (finalTranscript || interimTranscript).trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g,"");
         
-        // 防呆：如果辨識出空字串，直接過濾
+        // 防呆：如果空字串，直接過濾
         if (!currentText || currentText.length === 0) {
           return; 
         }
 
         if (placeholderText) placeholderText.remove();
 
-        // 🚀 實時更新畫面上使用者正在說的原文框（字會跟著同步跑）
+        // 🚀 實時更新畫面上使用者正在說的原文框
         updateLiveOriginalMessage(currentText);
         
+        // 🚀 雙重防重複過濾：
+        // 檢查當前字串是否和上一次發送成功的字串完全一樣，或者當前字串包含在上次發送的字串中
+        if (currentText === lastSentText || lastSentText.includes(currentText)) {
+          return;
+        }
+
         // 🚀 極速防抖翻譯發送邏輯
-        // 當使用者還在持續講話時，一直清除定時器；一旦說話停頓超過 600 毫秒 (0.6秒)，立刻送出翻譯！
         clearTimeout(googleTranslateTimer);
         googleTranslateTimer = setTimeout(() => {
           
-          // 防呆：如果這一句跟上一句完全一樣，就不用重複送去翻譯
-          if (currentText === lastSentText) return;
+          // 🔒 檢查鎖定狀態：如果上一發請求還沒回傳，或者字串又重複了，就先攔截
+          if (isTranslatingLock || currentText === lastSentText) return;
+          
+          // 啟動防重複鎖並記錄最後發送文字
+          isTranslatingLock = true;
           lastSentText = currentText;
 
           const sourceLangShort = langSelect.value.split('-')[0]; 
@@ -127,9 +136,13 @@
           })
           .catch(err => {
             console.error("即時連線失敗:", err);
+          })
+          .finally(() => {
+            // 🔓 解開鎖定，延遲 100 毫秒解鎖，防止網路封包短時間重疊
+            setTimeout(() => { isTranslatingLock = false; }, 100);
           });
 
-        }, 600); // 💡 600 毫秒 = 0.6 秒。如果希望快到一講完就送，可以改成 400 或 500
+        }, 700); // 💡 0.7 秒防抖判定：給手機瀏覽器充足的時間做字串校正，大幅降低重複發送率
       };
 
       // 錯誤處理
@@ -167,6 +180,7 @@
       isListening = true;
       recognition.lang = langSelect.value;
       lastSentText = ""; // 清空快取
+      isTranslatingLock = false;
       try {
         recognition.start();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
