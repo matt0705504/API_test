@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>即時語音翻譯官 (Cloud STT 專業版)</title>
+  <title>即時語音翻譯官 (Cloud STT 專業版 V2)</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -14,7 +14,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (Cloud STT 專業版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (Cloud STT 專業版 V2)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -41,7 +41,7 @@
   </div>
 
   <script>
-    // 🔗 已更新為您最新的 GAS 網頁應用程式 URL
+    // 🔗 您的 GAS 網頁應用程式 URL (已去除全形空白雜質)
     const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzDhipNomXlVg6IPBxml2DgF6HzAqpzG5B0YCkAOKu2qsybDEyRPrg2ClKyKXCQEMxjNg/exec"; 
 
     const startBtn = document.getElementById('startBtn');
@@ -62,7 +62,7 @@
     let silenceTimer = null;
     let isSpeaking = false;
 
-    // 音量分貝觸發門檻 (環境噪音大可稍微調高至 30)
+    // 音量分貝觸發門檻
     const SILENCE_THRESHOLD = 25; 
     const SILENCE_DURATION = 660; // 💡 講者安靜 0.66 秒立刻切斷斷句
 
@@ -86,7 +86,7 @@
         };
 
         mediaRecorder.onstop = () => {
-          processAndSendAudio(); // 錄音停止時自動包裝發送
+          processAndSendAudio(); 
         };
 
         // 2. 初始化即時聲音頻率分析器 (VAD)
@@ -100,7 +100,6 @@
         analyser.connect(javascriptNode);
         javascriptNode.connect(audioContext.destination);
 
-        // 每個人開口說話時，即時運算音量震幅
         javascriptNode.onaudioprocess = () => {
           const array = new Uint8Array(analyser.frequencyBinCount);
           analyser.getByteFrequencyData(array);
@@ -113,14 +112,14 @@
               isSpeaking = true;
               if (mediaRecorder.state === "inactive") mediaRecorder.start(10);
             }
-            clearTimeout(silenceTimer); // 說話中，持續重置這 0.66 秒的倒數計時
+            clearTimeout(silenceTimer); 
           } else {
             if (isSpeaking) {
               clearTimeout(silenceTimer);
               silenceTimer = setTimeout(() => {
                 isSpeaking = false;
                 if (mediaRecorder.state === "recording") {
-                  mediaRecorder.stop(); // 靜音滿 0.66 秒，直接下刀停錄！
+                  mediaRecorder.stop(); 
                 }
               }, SILENCE_DURATION);
             }
@@ -152,7 +151,6 @@
       btnIcon.innerText = "🎙️";
     }
 
-    // 將錄好的獨立音訊片段轉為 Base64 並平行發送
     function processAndSendAudio() {
       if (audioChunks.length === 0) {
         if (isListening && !isSpeaking) mediaRecorder.start(10);
@@ -160,9 +158,8 @@
       }
 
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
-      audioChunks = []; // 立即清空，防止雜訊重合
+      audioChunks = []; 
 
-      // 【無縫重啟機制】發送上一段聲音的同時，下一段錄音已經在後台悄悄啟動，絕不漏字
       if (isListening && mediaRecorder.state === "inactive") {
         mediaRecorder.start(10);
       }
@@ -172,10 +169,8 @@
       reader.onloadend = function() {
         const base64Data = reader.result.split(',')[1]; 
         
-        // 畫面上先生成一個靜止的「辨識中」動態骨架，防畫面跳動
         const loadingNode = createLoadingMessage();
 
-        // 平行發送 POST 請求交給 GAS 處理
         fetch(GAS_WEB_APP_URL, {
           method: "POST",
           body: JSON.stringify({
@@ -186,7 +181,6 @@
         .then(res => res.json())
         .then(data => {
           if (data.success) {
-            // 收到雲端傳回的精準原文與翻譯，優雅渲染
             renderFinalDialogue(data.recognizedText, data.translatedText, loadingNode);
           } else {
             loadingNode.remove();
@@ -214,13 +208,11 @@
     function renderFinalDialogue(originalText, translatedText, loadingNode) {
       if (loadingNode) loadingNode.remove();
 
-      // 原文對話框
       const originalDiv = document.createElement('div');
       originalDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-700 animate-fade-in";
       originalDiv.innerText = "🗣️ " + originalText;
       chatBox.appendChild(originalDiv);
 
-      // 譯文對話框
       const translatedDiv = document.createElement('div');
       translatedDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
       translatedDiv.innerText = "📳 " + translatedText;
