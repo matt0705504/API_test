@@ -7,14 +7,14 @@
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .animate-fade-in { animation: fadeIn 0.15s ease-out forwards; }
+    .animate-fade-in { animation: fadeIn 0.2s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (終極穩定不跳動版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (前綴重疊完全裁切版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
       <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
@@ -53,18 +53,18 @@
 
     let recognition = null;
     let isListening = false;
-    let cutoffTimer = null; // 0.66秒精準斷句計時器
+    let oneSecondTimer = null; 
 
     // 🚀 快取記憶體
     let lastSentRawText = ""; // 記錄上一句送出翻譯的完整原始文字
-    let textBuffer = "";      // 內部穩定的 Final 字串緩衝區
+    let textBuffer = "";      // 內部緩衝區
 
     if (!SpeechRecognition) {
       alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
     } else {
       recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = true; // 保持開啟以維持高靈敏度斷句偵測
+      recognition.interimResults = true; 
 
       recognition.onresult = function(event) {
         if (placeholderText) placeholderText.remove();
@@ -83,71 +83,64 @@
         let cleanFinal = finalTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
         let cleanInterim = interimTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
 
-        // 🌊 只有當語音確定（Final）時，才塞入穩定的內部存錢筒
         if (cleanFinal.length > 0) {
           textBuffer = (textBuffer + " " + cleanFinal).trim().replace(/\s+/g, " ");
         }
 
-        // 🔒 【關鍵改動】：畫面上「只顯示」已經確定的 Final 文字串，完全不顯示臨時比對的 Interim 文字
-        let stableLiveSpeech = textBuffer;
+        let currentLiveSpeech = (textBuffer + " " + cleanInterim).trim().replace(/\s+/g, " ");
+        if (!currentLiveSpeech || currentLiveSpeech.length === 0) return;
 
-        // 如果在說話中，但底層還沒釋出任何 Final 節點，stableLiveSpeech 會是空的。
-        // 此時如果 interim 有字，代表使用者正在說話，我們仍要持續刷新「斷句計時器」，但「不更新畫面」，防止跳動！
-        let absoluteLiveText = (textBuffer + " " + cleanInterim).trim().replace(/\s+/g, " ");
-        if (!absoluteLiveText || absoluteLiveText.length === 0) return;
+        // 步驟 1：即時更新畫面原文
+        updateLiveOriginalMessage(currentLiveSpeech);
 
-        // 🗣️ 步驟 1：只有在有確定狀態的文字時才更新畫面，否則畫面保持絕對靜止不跳動
-        if (stableLiveSpeech.length > 0) {
-          updateLiveOriginalMessage(stableLiveSpeech);
-        }
-
-        // ⏱️ 0.66秒智慧斷句計時器
-        clearTimeout(cutoffTimer);
-        cutoffTimer = setTimeout(() => {
+        // ⏱️ 1秒智慧斷句計時器
+        clearTimeout(oneSecondTimer);
+        oneSecondTimer = setTimeout(() => {
           
-          // 📸 斷句時，不論有沒有被塞進 Final，我們都擷取這一瞬間最完整的總文字快照
-          let targetText = absoluteLiveText;
+          let targetText = currentLiveSpeech;
           
-          // 🧠 前綴重疊完全裁切演算法
+          // 🧠 【核心改動】：只要開頭有任何重合，二話不說直接切斷，不計較百分比
           if (lastSentRawText.length > 0) {
             let maxOverlapLen = 0;
             let checkLimit = Math.min(lastSentRawText.length, targetText.length);
 
+            // 逐字比對新舊句子的開頭前綴
             for (let i = 1; i <= checkLimit; i++) {
               let prevChunk = lastSentRawText.substring(0, i).toLowerCase().trim();
               let nextChunk = targetText.substring(0, i).toLowerCase().trim();
               if (prevChunk === nextChunk) {
-                maxOverlapLen = i; 
+                maxOverlapLen = i; // 只要一樣，就一直往後記錄重疊的最大長度
               } else {
-                break; 
+                break; // 一旦字眼分道揚鑣，立刻中斷
               }
             }
 
             if (maxOverlapLen > 0) {
-              console.log(`[強制切斷重疊] 發現前綴重合 ${maxOverlapLen} 個字元，強制裁切。`);
+              console.log(`[強制切斷重疊] 發現前綴重合 ${maxOverlapLen} 個字元，執行強制全段裁切。`);
+              // ✂️ 直接切掉跟上一句重複的所有開頭，只留真正全新長出來的後半句
               targetText = targetText.substring(maxOverlapLen).trim();
             }
           }
 
-          // 防呆：切完如果空了，代表是純重複訊號，直接捨棄不發送
+          // 防呆：切完如果空了，代表完全是上一句的重播殘留，直接捨棄不發送
           if (!targetText || targetText.length === 0) {
             textBuffer = "";
             return;
           }
 
-          // 🔒 更新記憶庫
-          lastSentRawText = absoluteLiveText;
+          // 🔒 更新記憶庫：記住這次未裁切前的總字串，供下一輪比對
+          lastSentRawText = currentLiveSpeech;
 
           // 🧹 清空緩衝區，準備迎接步驟 2 的下一段對話
           textBuffer = "";
 
-          // 定格當前原文 HTML 節點，並補齊最終沒顯示到的剩餘字
+          // 定格當前原文 HTML 節點
           const liveNode = finalizeLiveMessage(targetText);
 
           // 步驟 2 & 3：丟給背景平行非同步送翻
           sendToTranslate(targetText, liveNode);
 
-        }, 660); // 💡 精準縮短至 660 毫秒 = 0.66 秒停頓斷句
+        }, 1000); // 1.0 秒停頓斷句
       };
 
       function sendToTranslate(textToTranslate, targetOriginalNode) {
@@ -236,14 +229,8 @@
         lastMsg.innerText = "🗣️ " + finalCleanedText; 
         lastMsg.classList.remove('is-live-original');
         return lastMsg;
-      } else {
-        // 如果此句此前完全沒觸發 Final 渲染（畫面一片空白），在斷句瞬間直接補建立一個完整乾淨的原文方塊
-        const msgDiv = document.createElement('div');
-        msgDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-600 animate-fade-in";
-        msgDiv.innerText = "🗣️ " + finalCleanedText;
-        chatBox.appendChild(msgDiv);
-        return msgDiv;
       }
+      return null;
     }
 
     function appendMessageAfterNode(translatedText, originalNode) {
