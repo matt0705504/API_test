@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>即時演講翻譯官 (混血極速版)</title>
+  <title>演講即時翻譯官 (Web Speech API + GCP)</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -14,7 +14,7 @@
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-xl mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">⚡ 即時演講翻譯 (原生辨識 + GCP翻譯)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">⚡ Web Speech API + GCP 演講即時翻譯</h1>
     
     <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-100 space-y-3">
       <div>
@@ -28,15 +28,15 @@
       </div>
       
       <div class="flex items-center justify-between text-xs font-mono bg-slate-50 p-2 rounded-lg border border-slate-100">
-        <span class="text-slate-500">🛰️ 系統運行狀態：</span>
-        <span id="statusLabel" class="text-slate-500 font-bold">● 準備就緒</span>
+        <span class="text-slate-500">🛰️ Web Speech API 狀態：</span>
+        <span id="statusLabel" class="text-slate-500 font-bold">● 閒置中</span>
       </div>
     </div>
 
     <div class="flex-1 bg-white p-4 rounded-xl shadow-xs border border-slate-100 flex flex-col min-h-[420px]">
       <div class="flex-1 overflow-y-auto space-y-4 max-h-[65vh]" id="chatBox">
         <p id="placeholderText" class="text-slate-400 text-center text-sm mt-10">
-          點擊下方按鈕開始。<br>開口說話時原文會【零延遲】動態浮現，停頓定稿後立即交由 GCP 翻譯成精準繁中！
+          🚀 點擊下方按鈕啟動。<br>演講者開口時，原文會透過 Web Speech API 零延遲彈出，定稿後秒速送往 GCP 翻譯成繁中！
         </p>
       </div>
     </div>
@@ -44,13 +44,13 @@
 
   <div class="w-full max-w-xl mx-auto mt-4 sticky bottom-0 bg-slate-50 py-2">
     <button id="startBtn" class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98">
-      <span id="btnIcon">🎙️</span> <span id="btnText">啟動即時演講翻譯</span>
+      <span id="btnIcon">🎙️</span> <span id="btnText">啟動 Web Speech API 監聽</span>
     </button>
   </div>
 
   <script>
-    // 🔗 填入您的 GAS 網頁應用程式 URL
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwlixsaSH7_a0hjA0fKX9teHzDCkryynjNIeKqrEi5ddSmYzGnJL5Jj5MqgkTXv4ICWDg/exec"; 
+    // 🔗 請在此處填入您的 GAS 網頁應用程式 URL
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzaA6a8ow4w8y8F7Oi7EqShIwsoph4CzHDyOM_qNXJ7bhl4_deuUrH1N_Jf6J2aiYxH9A/exec"; 
 
     const startBtn = document.getElementById('startBtn');
     const btnText = document.getElementById('btnText');
@@ -62,7 +62,7 @@
 
     let recognition = null;
     let isListening = false;
-    let currentInterimBlock = null; // 用於渲染動態跳字的暫存格
+    let currentInterimBlock = null; 
 
     startBtn.addEventListener('click', () => {
       if (!isListening) startSpeechRecognition();
@@ -70,6 +70,7 @@
     });
 
     function startSpeechRecognition() {
+      // 🛠️ 初始化瀏覽器原生 Web Speech API
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
         alert("您的瀏覽器不支援 Web Speech API，請改用 Google Chrome 瀏覽器。");
@@ -77,18 +78,18 @@
       }
 
       recognition = new SpeechRecognition();
-      recognition.continuous = true;       // 核心：持續監聽不中斷錄音
-      recognition.interimResults = true;   // 核心：即時動態吐出未定稿單字
+      recognition.continuous = true;       // 🔥 關鍵：維持不間斷的演講錄音監聽
+      recognition.interimResults = true;   // 🔥 關鍵：開啟毫秒級即時跳字功能
       recognition.lang = langSelect.value;
 
       recognition.onstart = () => {
         isListening = true;
         if (placeholderText) placeholderText.remove();
-        statusLabel.innerText = "● 演講即時監聽中 (高速串流模式)";
+        statusLabel.innerText = "● 語音即時監聽中 (字隨音噴)";
         statusLabel.className = "text-emerald-600 font-bold animate-pulse";
         
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-        btnText.innerText = "停止演講錄製";
+        btnText.innerText = "停止演講監聽";
         btnIcon.innerText = "🛑";
       };
 
@@ -104,7 +105,7 @@
           }
         }
 
-        // 🟢 1. 處理【毫秒級即時跳字】
+        // 🟢 1. 處理 Web Speech API 【動態暫存跳字】 (體感 0 延遲)
         if (interimTranscript.trim().length > 0) {
           if (!currentInterimBlock) {
             currentInterimBlock = document.createElement('div');
@@ -115,33 +116,31 @@
           chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        // 🔵 2. 處理【整句說完定稿】 -> 觸發高速 GCP 翻譯
+        // 🔵 2. 處理 Web Speech API 【語音斷句定稿】 -> 立即丟給 GCP 翻譯
         if (finalTranscript.trim().length > 0) {
           if (currentInterimBlock) {
-            currentInterimBlock.remove(); // 清除過渡動態字
+            currentInterimBlock.remove(); 
             currentInterimBlock = null;
           }
           
-          // 在看板印出確定的原文
+          // 渲染拍板定案的原文
           renderOriginalText(finalTranscript);
-          // 將極小體積的純文字丟給後端 GCP 進行翻譯
+          // 秒速發送微小的「純文字」給 GCP Cloud Translation API
           sendTextToGCPTranslate(finalTranscript, langSelect.value);
         }
       };
 
       recognition.onerror = (event) => {
-        console.error("識別異常:", event.error);
+        console.error("Web Speech API 錯誤:", event.error);
         if (event.error === 'not-allowed') {
-          alert("請授權網頁麥克風權限以進行演講辨識。");
+          alert("請授權麥克風權限以供 Web Speech API 使用。");
           stopSpeechRecognition();
         }
       };
 
       recognition.onend = () => {
-        // 演講防禦機制：避免演講講到一半被瀏覽器自動切斷，原地復活重啟
-        if (isListening) {
-          recognition.start();
-        }
+        // 演講防禦：避免長演講時瀏覽器省電或意外斷開，原地自動復活重啟
+        if (isListening) recognition.start();
       };
 
       recognition.start();
@@ -154,13 +153,14 @@
       statusLabel.className = "text-slate-500 font-bold";
       
       startBtn.className = "w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-      btnText.innerText = "啟動即時演講翻譯";
+      btnText.innerText = "啟動 Web Speech API 監聽";
       btnIcon.innerText = "🎙️";
     }
 
     function sendTextToGCPTranslate(text, lang) {
       const loadingNode = createLoadingMessage();
 
+      // 發送純文字給後端
       fetch(GAS_WEB_APP_URL, {
         method: "POST",
         body: JSON.stringify({ text: text, sourceLang: lang })
@@ -171,12 +171,12 @@
         if (data.success) {
           renderTranslatedText(data.translatedText);
         } else {
-          renderErrorDialogue("GCP 翻譯引擎未回應");
+          renderErrorDialogue("GCP Translation 未回應");
         }
       })
       .catch(err => {
         loadingNode.remove();
-        renderErrorDialogue("連線超時，翻譯失敗");
+        renderErrorDialogue("網路連線超時");
       });
     }
 
