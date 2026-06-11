@@ -3,57 +3,58 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>即時語音翻譯官 (自動斷句專業版)</title>
+  <title>即時語音翻譯官 (GCP 演講專用版)</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .animate-fade-in { animation: fadeIn 0.15s ease-out forwards; }
+    .animate-fade-in { animation: fadeIn 0.18s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
-  <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (自動斷句專業版)</h1>
+  <div class="w-full max-w-xl mx-auto space-y-4 flex-1 flex flex-col">
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (GCP 演講專用版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100 space-y-2">
       <div>
-        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
+        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇演講者使用的語系：</label>
         <select id="langSelect" class="w-full p-2.5 border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
           <option value="en-US">英文 (English)</option>
           <option value="ja-JP">日文 (日本語)</option>
           <option value="ko-KR">韓文 (한국어)</option>
+          <option value="zh-TW">中文 (繁體台灣)</option>
         </select>
       </div>
       
       <div class="pt-1 flex items-center gap-2 text-xs text-slate-500">
-        <span class="shrink-0">🎤 聲音偵測：</span>
+        <span class="shrink-0">🎤 演講音量偵測：</span>
         <div class="flex-1 bg-slate-100 h-2.5 rounded-full overflow-hidden relative">
           <div id="volumeBar" class="bg-emerald-500 h-full w-0 transition-all duration-75"></div>
-          <div class="absolute left-[20%] top-0 w-0.5 h-full bg-red-400 opacity-40"></div>
+          <div class="absolute left-[15%] top-0 w-0.5 h-full bg-red-400 opacity-30"></div>
         </div>
         <span id="volumeVal" class="font-mono w-4 text-right">0</span>
       </div>
     </div>
 
-    <div class="flex-1 bg-white p-4 rounded-xl shadow-xs border border-slate-100 flex flex-col min-h-[350px]">
-      <div class="flex-1 overflow-y-auto space-y-4 max-h-[60vh]" id="chatBox">
+    <div class="flex-1 bg-white p-4 rounded-xl shadow-xs border border-slate-100 flex flex-col min-h-[400px]">
+      <div class="flex-1 overflow-y-auto space-y-4 max-h-[65vh]" id="chatBox">
         <p id="placeholderText" class="text-slate-400 text-center text-sm mt-10">
-          💡 本版引入最高規 RMS 語音物理斷句技術。<br>說完話自然停頓 0.6 秒，系統即會自動送翻！
+          📢 演講模式已啟動。<br>本版本已將自動斷句延遲拉長至 1.6 秒，確保演講者講完完整段落後才會進行專業 GCP 翻譯。
         </p>
       </div>
     </div>
   </div>
 
-  <div class="w-full max-w-md mx-auto mt-4 sticky bottom-0 bg-slate-50 py-2">
+  <div class="w-full max-w-xl mx-auto mt-4 sticky bottom-0 bg-slate-50 py-2">
     <button id="startBtn" class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98">
-      <span id="btnIcon">🎙️</span> <span id="btnText">啟動麥克風聆聽</span>
+      <span id="btnIcon">🎙️</span> <span id="btnText">開始錄製演講</span>
     </button>
   </div>
 
   <script>
-    // 🔗 您的 GAS 網頁應用程式 URL
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbz7xeQI_GP8zIdCBWFcS34tvgdav86DEBIlGFJm9zqO8RYVvgAd5m1Gme4I0IPgjaBPfw/exec"; 
+    // 🔗 ⚠️ 請將下方網址替換為您「重新部署後」得到的全新 GAS 網頁應用程式網址！
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbw5fux7b5YjYUougPwjEME9YlI97EvCAn8LsOZYUYPmMv2qyox9oLj7nbo9HacqXUTNYA/exec"; 
 
     const startBtn = document.getElementById('startBtn');
     const btnText = document.getElementById('btnText');
@@ -68,18 +69,17 @@
     let mediaRecorder = null;
     let audioChunks = [];
     
-    // VAD 斷句核心控制變數
     let audioContext = null;
     let analyser = null;
     let javascriptNode = null;
     let silenceTimer = null;
-    let maxSpeechTimer = null; // 長發言強制分段計時器
+    let maxSpeechTimer = null; 
     let isSpeaking = false;
 
-    // 🔬 黃金參數調整
-    const SILENCE_THRESHOLD = 2;   // RMS音量超過 2 視為說話 (大聲說話通常會衝到 10~30)
-    const SILENCE_DURATION = 650;  // 講完話安靜 0.65 秒立刻自動切斷送翻
-    const MAX_SPEECH_LIMIT = 6000; // 💡 安全機制：即使環境吵雜，每講 6 秒也會強制切斷送翻一次，避免卡死
+    // 🎛️ 針對演講情境調校的黃金參數
+    const SILENCE_THRESHOLD = 2;    // 超過此音量視為說話
+    const SILENCE_DURATION = 1600;  // 💡 演講專用：演講者閉嘴停頓滿 1.6 秒，才視為完整句子結束，發動送翻
+    const MAX_SPEECH_LIMIT = 15000; // 💡 演講安全防禦線：即使演講者完全不停頓，每滿 15 秒也會強行切一刀送翻，保障即時性
 
     startBtn.addEventListener('click', () => {
       if (!isListening) startAudioListening();
@@ -91,18 +91,18 @@
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         
-        // 1. 底層錄音器
+        // 建立高音質規格錄音器
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) audioChunks.push(event.data);
         };
         mediaRecorder.onstop = () => { processAndSendAudio(); };
 
-        // 2. 高精準度時域物理音量分析 (RMS)
+        // 啟動時域物理音量監測 (RMS)
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioContext.createMediaStreamSource(stream);
         analyser = audioContext.createAnalyser();
-        analyser.fftSize = 512; // 縮小視窗讓音量反應更即時
+        analyser.fftSize = 512; 
         source.connect(analyser);
 
         javascriptNode = audioContext.createScriptProcessor(512, 1, 1);
@@ -113,30 +113,28 @@
           const array = new Float32Array(analyser.frequencyBinCount);
           analyser.getFloatTimeDomainData(array);
           
-          // 計算均方根 (RMS) 物理真實音量
           let sum = 0;
           for (let i = 0; i < array.length; i++) { sum += array[i] * array[i]; }
           const rms = Math.sqrt(sum / array.length);
-          const currentVolume = Math.round(rms * 100); // 放大至 0-100 方便對比
+          const currentVolume = Math.round(rms * 100); 
 
-          // 即時刷新 UI 音量條
           if (volumeBar) volumeBar.style.width = Math.min(currentVolume * 10, 100) + '%';
           if (volumeVal) volumeVal.innerText = currentVolume;
+          
           if (volumeBar) {
             if (currentVolume > SILENCE_THRESHOLD) {
-              volumeBar.className = "bg-indigo-500 h-full w-0 transition-all duration-75"; // 說話中變藍色
+              volumeBar.className = "bg-indigo-500 h-full w-0 transition-all duration-75"; // 偵測到演講聲
             } else {
-              volumeBar.className = "bg-emerald-500 h-full w-0 transition-all duration-75"; // 靜音變綠色
+              volumeBar.className = "bg-emerald-500 h-full w-0 transition-all duration-75"; // 安靜中
             }
           }
 
-          // 核心 VAD 自動開關判定
           if (currentVolume > SILENCE_THRESHOLD) {
             if (!isSpeaking) {
               isSpeaking = true;
               if (mediaRecorder.state === "inactive") mediaRecorder.start(10);
               
-              // ⏳ 長發言安全分段：說話持續滿 6 秒強制後台切斷送翻，完全防卡死
+              // ⏳ 長發言控制
               clearTimeout(maxSpeechTimer);
               maxSpeechTimer = setTimeout(() => {
                 if (mediaRecorder.state === "recording") {
@@ -145,11 +143,11 @@
                 }
               }, MAX_SPEECH_LIMIT);
             }
-            clearTimeout(silenceTimer); // 持續說話中，清除安靜倒數
+            clearTimeout(silenceTimer); 
           } else {
             if (isSpeaking) {
               clearTimeout(silenceTimer);
-              // 安靜時間滿足 0.65 秒，下刀切斷，觸發送翻！
+              // 滿足演講停頓 1.6 秒後，完美切斷送出
               silenceTimer = setTimeout(() => {
                 isSpeaking = false;
                 clearTimeout(maxSpeechTimer);
@@ -162,11 +160,11 @@
         isListening = true;
         if (placeholderText) placeholderText.remove();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-        btnText.innerText = "智能聆聽中 (說完話停頓自動翻譯)...";
+        btnText.innerText = "演講錄製與即時翻譯中... (點擊可停止)";
         btnIcon.innerText = "🛑";
 
       } catch (err) {
-        alert("無法啟動麥克風，請確保在安全加密環境 (HTTPS) 下開啟此網頁。");
+        alert("無法啟動麥克風，請確保網頁運行在 HTTPS 安全加密環境下。");
       }
     }
 
@@ -183,7 +181,7 @@
       if (volumeVal) volumeVal.innerText = '0';
 
       startBtn.className = "w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-      btnText.innerText = "啟動麥克風聆聽";
+      btnText.innerText = "開始錄製演講";
       btnIcon.innerText = "🎙️";
     }
 
@@ -196,7 +194,7 @@
       const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
       audioChunks = []; 
 
-      // 【動態無縫銜接】在發送上段音訊的同時，下段錄音已在後台無縫重啟，完全不漏字
+      // 確保無縫銜接下一段演講錄製
       if (isListening && mediaRecorder.state === "inactive") {
         mediaRecorder.start(10);
       }
@@ -222,7 +220,7 @@
         })
         .catch(err => {
           loadingNode.remove();
-          renderErrorDialogue("網路連線逾時，請檢查網路或 GAS 狀態");
+          renderErrorDialogue("網路連線超時，請檢查手機網路或 GAS 部署狀態。");
         });
       };
     }
@@ -230,7 +228,7 @@
     function createLoadingMessage() {
       const wrapper = document.createElement('div');
       wrapper.className = "space-y-2 w-full animate-pulse";
-      wrapper.innerHTML = `<div class="bg-slate-200 p-3 rounded-xl max-w-[50%] text-xs text-slate-400">🗣️ 雲端辨識中...</div>`;
+      wrapper.innerHTML = `<div class="bg-slate-200 p-2 rounded-lg max-w-[40%] text-xs text-slate-500">✨ GCP 雲端 AI 翻譯中...</div>`;
       chatBox.appendChild(wrapper);
       chatBox.scrollTop = chatBox.scrollHeight;
       return wrapper;
@@ -238,12 +236,12 @@
 
     function renderFinalDialogue(originalText, translatedText) {
       const originalDiv = document.createElement('div');
-      originalDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-700 animate-fade-in";
-      originalDiv.innerText = "🗣️ " + originalText;
+      originalDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-xs text-slate-600 animate-fade-in";
+      originalDiv.innerText = "🎤 " + originalText;
       chatBox.appendChild(originalDiv);
 
       const translatedDiv = document.createElement('div');
-      translatedDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
+      translatedDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-medium text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
       translatedDiv.innerText = "📳 " + translatedText;
       chatBox.appendChild(translatedDiv);
       chatBox.scrollTop = chatBox.scrollHeight;
@@ -251,8 +249,8 @@
 
     function renderErrorDialogue(errorMsg) {
       const errorDiv = document.createElement('div');
-      errorDiv.className = "bg-red-50 text-red-700 p-3 rounded-xl max-w-[90%] mx-auto text-xs border border-red-200 my-1 text-center animate-fade-in";
-      errorDiv.innerText = "⚠️ 提示：" + errorMsg;
+      errorDiv.className = "bg-red-50 text-red-700 p-3 rounded-xl max-w-[90%] mx-auto text-xs border border-red-200 my-1 animate-fade-in";
+      errorDiv.innerText = "⚠️ 錯誤提示：" + errorMsg;
       chatBox.appendChild(errorDiv);
       chatBox.scrollTop = chatBox.scrollHeight;
     }
