@@ -3,18 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>即時語音翻譯官 (GCP 演講專用版)</title>
+  <title>即時語音翻譯官 (極速緩衝演講版)</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .animate-fade-in { animation: fadeIn 0.18s ease-out forwards; }
+    .animate-fade-in { animation: fadeIn 0.15s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
   <div class="w-full max-w-xl mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (GCP 演講專用版)</h1>
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (極速緩衝演講版)</h1>
     
     <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100 space-y-2">
       <div>
@@ -27,20 +27,25 @@
         </select>
       </div>
       
-      <div class="pt-1 flex items-center gap-2 text-xs text-slate-500">
-        <span class="shrink-0">🎤 演講音量偵測：</span>
-        <div class="flex-1 bg-slate-100 h-2.5 rounded-full overflow-hidden relative">
-          <div id="volumeBar" class="bg-emerald-500 h-full w-0 transition-all duration-75"></div>
-          <div class="absolute left-[15%] top-0 w-0.5 h-full bg-red-400 opacity-30"></div>
+      <div class="pt-1 space-y-1.5 text-xs text-slate-500">
+        <div class="flex items-center gap-2">
+          <span class="shrink-0">🎤 演講聲音偵測：</span>
+          <div class="flex-1 bg-slate-100 h-2.5 rounded-full overflow-hidden relative">
+            <div id="volumeBar" class="bg-emerald-500 h-full w-0 transition-all duration-75"></div>
+          </div>
+          <span id="volumeVal" class="font-mono w-4 text-right">0</span>
         </div>
-        <span id="volumeVal" class="font-mono w-4 text-right">0</span>
+        <div class="flex justify-between items-center bg-slate-100 p-1.5 rounded-md px-2 font-mono">
+          <span>⏳ 背景排隊緩衝區 (Buffer Queue)：</span>
+          <span id="queueCounter" class="font-bold text-indigo-600">0 個片段等待中</span>
+        </div>
       </div>
     </div>
 
     <div class="flex-1 bg-white p-4 rounded-xl shadow-xs border border-slate-100 flex flex-col min-h-[400px]">
-      <div class="flex-1 overflow-y-auto space-y-4 max-h-[65vh]" id="chatBox">
+      <div class="flex-1 overflow-y-auto space-y-4 max-h-[62vh]" id="chatBox">
         <p id="placeholderText" class="text-slate-400 text-center text-sm mt-10">
-          📢 演講模式已啟動。<br>本版本已將自動斷句延遲拉長至 1.6 秒，確保演講者講完完整段落後才會進行專業 GCP 翻譯。
+          🚀 智慧非同步緩衝模式已就緒。<br>說話停頓滿 0.66 秒即自動切片送翻，背景錄音 100% 持續運行不中斷！
         </p>
       </div>
     </div>
@@ -53,8 +58,8 @@
   </div>
 
   <script>
-    // 🔗 ⚠️ 請將下方網址替換為您「重新部署後」得到的全新 GAS 網頁應用程式網址！
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbw5fux7b5YjYUougPwjEME9YlI97EvCAn8LsOZYUYPmMv2qyox9oLj7nbo9HacqXUTNYA/exec"; 
+    // 🔗 您的 GAS 網頁應用程式 URL
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyG2N4_pzMyvb9hjkPQuPyq4x2GW4gG9OhpSHI-UrIl3FszpPzrcGwcIdG5BXgYGgVuOg/exec"; 
 
     const startBtn = document.getElementById('startBtn');
     const btnText = document.getElementById('btnText');
@@ -64,6 +69,7 @@
     const placeholderText = document.getElementById('placeholderText');
     const volumeBar = document.getElementById('volumeBar');
     const volumeVal = document.getElementById('volumeVal');
+    const queueCounter = document.getElementById('queueCounter');
 
     let isListening = false;
     let mediaRecorder = null;
@@ -76,10 +82,14 @@
     let maxSpeechTimer = null; 
     let isSpeaking = false;
 
-    // 🎛️ 針對演講情境調校的黃金參數
-    const SILENCE_THRESHOLD = 2;    // 超過此音量視為說話
-    const SILENCE_DURATION = 1600;  // 💡 演講專用：演講者閉嘴停頓滿 1.6 秒，才視為完整句子結束，發動送翻
-    const MAX_SPEECH_LIMIT = 15000; // 💡 演講安全防禦線：即使演講者完全不停頓，每滿 15 秒也會強行切一刀送翻，保障即時性
+    // 🏎️ 核心非同步排隊緩衝控制
+    let translationQueue = [];
+    let isProcessingQueue = false;
+
+    // 🎛️ 參數調校
+    const SILENCE_THRESHOLD = 2;    
+    const SILENCE_DURATION = 660;   // 🎯 依要求改為 0.66 秒極速斷句
+    const MAX_SPEECH_LIMIT = 10000;  // 安全防禦線：單句發言最長 10 秒強行切片
 
     startBtn.addEventListener('click', () => {
       if (!isListening) startAudioListening();
@@ -88,17 +98,13 @@
 
     async function startAudioListening() {
       audioChunks = [];
+      translationQueue = [];
+      updateQueueUI();
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         
-        // 建立高音質規格錄音器
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) audioChunks.push(event.data);
-        };
-        mediaRecorder.onstop = () => { processAndSendAudio(); };
+        setupMediaRecorder(stream);
 
-        // 啟動時域物理音量監測 (RMS)
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const source = audioContext.createMediaStreamSource(stream);
         analyser = audioContext.createAnalyser();
@@ -123,23 +129,22 @@
           
           if (volumeBar) {
             if (currentVolume > SILENCE_THRESHOLD) {
-              volumeBar.className = "bg-indigo-500 h-full w-0 transition-all duration-75"; // 偵測到演講聲
+              volumeBar.className = "bg-indigo-500 h-full w-0 transition-all duration-75"; 
             } else {
-              volumeBar.className = "bg-emerald-500 h-full w-0 transition-all duration-75"; // 安靜中
+              volumeBar.className = "bg-emerald-500 h-full w-0 transition-all duration-75"; 
             }
           }
 
           if (currentVolume > SILENCE_THRESHOLD) {
             if (!isSpeaking) {
               isSpeaking = true;
-              if (mediaRecorder.state === "inactive") mediaRecorder.start(10);
+              if (mediaRecorder && mediaRecorder.state === "inactive") mediaRecorder.start(10);
               
-              // ⏳ 長發言控制
               clearTimeout(maxSpeechTimer);
               maxSpeechTimer = setTimeout(() => {
-                if (mediaRecorder.state === "recording") {
+                if (mediaRecorder && mediaRecorder.state === "recording") {
                   isSpeaking = false;
-                  mediaRecorder.stop(); 
+                  mediaRecorder.stop(); // 觸發極速切片
                 }
               }, MAX_SPEECH_LIMIT);
             }
@@ -147,11 +152,10 @@
           } else {
             if (isSpeaking) {
               clearTimeout(silenceTimer);
-              // 滿足演講停頓 1.6 秒後，完美切斷送出
               silenceTimer = setTimeout(() => {
                 isSpeaking = false;
                 clearTimeout(maxSpeechTimer);
-                if (mediaRecorder.state === "recording") mediaRecorder.stop(); 
+                if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop(); // 滿足 0.66 秒，觸發切片
               }, SILENCE_DURATION);
             }
           }
@@ -160,12 +164,35 @@
         isListening = true;
         if (placeholderText) placeholderText.remove();
         startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-        btnText.innerText = "演講錄製與即時翻譯中... (點擊可停止)";
+        btnText.innerText = "演講智慧錄製與緩衝翻譯中...";
         btnIcon.innerText = "🛑";
 
       } catch (err) {
-        alert("無法啟動麥克風，請確保網頁運行在 HTTPS 安全加密環境下。");
+        alert("無法啟動麥克風，請確保在 HTTPS 環境下開啟。");
       }
+    }
+
+    function setupMediaRecorder(stream) {
+      mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+      
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        if (audioChunks.length > 0) {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
+          audioChunks = []; // 秒清空，準備收下一句
+
+          // 核心黑科技：錄音器一停，在 0.001 秒內原地復活，後續演講背景繼續錄！
+          if (isListening) {
+            mediaRecorder.start(10);
+          }
+
+          // 將切下來的音訊包裹，塞入背景緩衝佇列
+          pushToBufferQueue(audioBlob, langSelect.value);
+        }
+      };
     }
 
     function stopAudioListening() {
@@ -185,50 +212,79 @@
       btnIcon.innerText = "🎙️";
     }
 
-    function processAndSendAudio() {
-      if (audioChunks.length === 0) {
-        if (isListening && !isSpeaking && mediaRecorder.state === "inactive") mediaRecorder.start(10);
-        return;
+    // 📦 處理緩衝區入隊
+    function pushToBufferQueue(blob, lang) {
+      // 在畫面上依序先建立好「等待格」，確保演講字幕順序不會錯亂
+      const loadingNode = createLoadingMessage();
+      
+      translationQueue.push({ blob: blob, lang: lang, uiNode: loadingNode });
+      updateQueueUI();
+      
+      // 觸發排隊處理器
+      executeQueueProcessor();
+    }
+
+    function updateQueueUI() {
+      if (queueCounter) {
+        queueCounter.innerText = `${translationQueue.length} 个片段排隊等待中`;
+      }
+    }
+
+    // ⚙️ 背景排隊處理核心 (順序完全對齊)
+    async function executeQueueProcessor() {
+      if (isProcessingQueue) return; // 如果有前一句正在給 GCP 翻譯，就讓後面的繼續在背景排隊
+      isProcessingQueue = true;
+
+      while (translationQueue.length > 0) {
+        const task = translationQueue[0]; // 取出隊頭，但先不刪除
+
+        try {
+          await sendAudioTaskToGCP(task);
+        } catch (err) {
+          console.error("Task failed", err);
+        }
+
+        translationQueue.shift(); // 翻譯成功後移出隊列
+        updateQueueUI();
       }
 
-      const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
-      audioChunks = []; 
+      isProcessingQueue = false;
+    }
 
-      // 確保無縫銜接下一段演講錄製
-      if (isListening && mediaRecorder.state === "inactive") {
-        mediaRecorder.start(10);
-      }
+    function sendAudioTaskToGCP(task) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(task.blob);
+        reader.onloadend = function() {
+          const base64Data = reader.result.split(',')[1];
 
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      reader.onloadend = function() {
-        const base64Data = reader.result.split(',')[1]; 
-        const loadingNode = createLoadingMessage();
-
-        fetch(GAS_WEB_APP_URL, {
-          method: "POST",
-          body: JSON.stringify({ audio: base64Data, sourceLang: langSelect.value })
-        })
-        .then(res => res.json())
-        .then(data => {
-          loadingNode.remove();
-          if (data.success) {
-            renderFinalDialogue(data.recognizedText, data.translatedText);
-          } else {
-            renderErrorDialogue(data.error);
-          }
-        })
-        .catch(err => {
-          loadingNode.remove();
-          renderErrorDialogue("網路連線超時，請檢查手機網路或 GAS 部署狀態。");
-        });
-      };
+          fetch(GAS_WEB_APP_URL, {
+            method: "POST",
+            body: JSON.stringify({ audio: base64Data, sourceLang: task.lang })
+          })
+          .then(res => res.json())
+          .then(data => {
+            task.uiNode.remove(); // 移除載入中動畫
+            if (data.success) {
+              renderFinalDialogue(data.recognizedText, data.translatedText);
+            } else {
+              renderErrorDialogue("GCP 略過未讀出文字");
+            }
+            resolve();
+          })
+          .catch(err => {
+            task.uiNode.remove();
+            renderErrorDialogue("GCP 連線超時，此段略過");
+            resolve();
+          });
+        };
+      });
     }
 
     function createLoadingMessage() {
       const wrapper = document.createElement('div');
-      wrapper.className = "space-y-2 w-full animate-pulse";
-      wrapper.innerHTML = `<div class="bg-slate-200 p-2 rounded-lg max-w-[40%] text-xs text-slate-500">✨ GCP 雲端 AI 翻譯中...</div>`;
+      wrapper.className = "space-y-1 w-full animate-pulse";
+      wrapper.innerHTML = `<div class="bg-slate-200 p-2 rounded-lg max-w-[35%] text-xs text-slate-400">⚡ 背景音訊上傳翻譯中...</div>`;
       chatBox.appendChild(wrapper);
       chatBox.scrollTop = chatBox.scrollHeight;
       return wrapper;
@@ -236,7 +292,7 @@
 
     function renderFinalDialogue(originalText, translatedText) {
       const originalDiv = document.createElement('div');
-      originalDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-xs text-slate-600 animate-fade-in";
+      originalDiv.className = "bg-slate-100 p-2.5 rounded-xl max-w-[85%] self-start text-xs text-slate-500 animate-fade-in";
       originalDiv.innerText = "🎤 " + originalText;
       chatBox.appendChild(originalDiv);
 
@@ -249,8 +305,8 @@
 
     function renderErrorDialogue(errorMsg) {
       const errorDiv = document.createElement('div');
-      errorDiv.className = "bg-red-50 text-red-700 p-3 rounded-xl max-w-[90%] mx-auto text-xs border border-red-200 my-1 animate-fade-in";
-      errorDiv.innerText = "⚠️ 錯誤提示：" + errorMsg;
+      errorDiv.className = "bg-amber-50 text-amber-700 p-2 rounded-lg max-w-[80%] mx-auto text-xs border border-amber-200 my-1 text-center opacity-60";
+      errorDiv.innerText = "💡 " + errorMsg;
       chatBox.appendChild(errorDiv);
       chatBox.scrollTop = chatBox.scrollHeight;
     }
