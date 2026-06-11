@@ -3,99 +3,74 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>演講即時翻譯官 (Web Speech API + GCP)</title>
+  <title>即時語音翻譯官</title>
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    .animate-fade-in { animation: fadeIn 0.12s ease-out forwards; }
+    .animate-fade-in { animation: fadeIn 0.15s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-800 p-4 min-h-screen flex flex-col justify-between">
 
-  <div class="w-full max-w-xl mx-auto space-y-4 flex-1 flex flex-col">
-    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">⚡ Web Speech API + GCP 演講即時翻譯</h1>
+  <div class="w-full max-w-md mx-auto space-y-4 flex-1 flex flex-col">
+    <h1 class="text-xl font-bold text-center text-indigo-600 my-2">🎙️ 即時語音翻譯官 (終極穩定不跳動版)</h1>
     
-    <div class="bg-white p-4 rounded-xl shadow-xs border border-slate-100 space-y-3">
-      <div>
-        <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇演講者使用的語系：</label>
-        <select id="langSelect" class="w-full p-2.5 border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
-          <option value="en-US">英文 (English)</option>
-          <option value="ja-JP">日文 (日本語)</option>
-          <option value="ko-KR">韓文 (한국어)</option>
-          <option value="zh-TW">中文 (繁體台灣)</option>
-        </select>
-      </div>
-      
-      <div class="flex items-center justify-between text-xs font-mono bg-slate-50 p-2 rounded-lg border border-slate-100">
-        <span class="text-slate-500">🛰️ Web Speech API 狀態：</span>
-        <span id="statusLabel" class="text-slate-500 font-bold">● 閒置中</span>
-      </div>
+    <div class="bg-white p-3 rounded-xl shadow-xs border border-slate-100">
+      <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">請選擇聆聽的語系：</label>
+      <select id="langSelect" class="w-full p-2.5 border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <option value="en-US">英文 (English)</option>
+        <option value="ja-JP">日文 (日本語)</option>
+        <option value="ko-KR">韓文 (한국어)</option>
+      </select>
     </div>
 
-    <div class="flex-1 bg-white p-4 rounded-xl shadow-xs border border-slate-100 flex flex-col min-h-[420px]">
+    <div class="flex-1 bg-white p-4 rounded-xl shadow-xs border border-slate-100 flex flex-col min-h-[350px]">
       <div class="flex-1 overflow-y-auto space-y-4 max-h-[65vh]" id="chatBox">
         <p id="placeholderText" class="text-slate-400 text-center text-sm mt-10">
-          🚀 點擊下方按鈕啟動。<br>演講者開口時，原文會透過 Web Speech API 零延遲彈出，定稿後秒速送往 GCP 翻譯成繁中！
+          💡 請確保使用 Safari 或 Chrome 開啟。<br>點擊下方按鈕開始說話！
         </p>
       </div>
     </div>
   </div>
 
-  <div class="w-full max-w-xl mx-auto mt-4 sticky bottom-0 bg-slate-50 py-2">
+  <div class="w-full max-w-md mx-auto mt-4 sticky bottom-0 bg-slate-50 py-2">
     <button id="startBtn" class="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98">
-      <span id="btnIcon">🎙️</span> <span id="btnText">啟動 Web Speech API 監聽</span>
+      <span id="btnIcon">🎙️</span> <span id="btnText">開始聆聽</span>
     </button>
   </div>
 
   <script>
-    // 🔗 請在此處填入您的 GAS 網頁應用程式 URL
-    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzaA6a8ow4w8y8F7Oi7EqShIwsoph4CzHDyOM_qNXJ7bhl4_deuUrH1N_Jf6J2aiYxH9A/exec"; 
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbwK9BVRL3veMY3DyPzvlCs1TnNyMYZyBIw3_bGB1vaAKd19VlX0803loGn0faaLZ0fT3w/exec"; 
 
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const startBtn = document.getElementById('startBtn');
     const btnText = document.getElementById('btnText');
     const btnIcon = document.getElementById('btnIcon');
     const langSelect = document.getElementById('langSelect');
     const chatBox = document.getElementById('chatBox');
     const placeholderText = document.getElementById('placeholderText');
-    const statusLabel = document.getElementById('statusLabel');
 
     let recognition = null;
     let isListening = false;
-    let currentInterimBlock = null; 
+    let cutoffTimer = null; // 0.66秒精準斷句計時器
 
-    startBtn.addEventListener('click', () => {
-      if (!isListening) startSpeechRecognition();
-      else stopSpeechRecognition();
-    });
+    // 🚀 快取記憶體
+    let lastSentRawText = ""; // 記錄上一句送出翻譯的完整原始文字
+    let textBuffer = "";      // 內部穩定的 Final 字串緩衝區
 
-    function startSpeechRecognition() {
-      // 🛠️ 初始化瀏覽器原生 Web Speech API
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        alert("您的瀏覽器不支援 Web Speech API，請改用 Google Chrome 瀏覽器。");
-        return;
-      }
-
+    if (!SpeechRecognition) {
+      alert("瀏覽器不支援語音辨識，請改用 Safari (iOS) 或 Chrome (Android)。");
+    } else {
       recognition = new SpeechRecognition();
-      recognition.continuous = true;       // 🔥 關鍵：維持不間斷的演講錄音監聽
-      recognition.interimResults = true;   // 🔥 關鍵：開啟毫秒級即時跳字功能
-      recognition.lang = langSelect.value;
+      recognition.continuous = true;
+      recognition.interimResults = true; // 保持開啟以維持高靈敏度斷句偵測
 
-      recognition.onstart = () => {
-        isListening = true;
+      recognition.onresult = function(event) {
         if (placeholderText) placeholderText.remove();
-        statusLabel.innerText = "● 語音即時監聽中 (字隨音噴)";
-        statusLabel.className = "text-emerald-600 font-bold animate-pulse";
-        
-        startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-        btnText.innerText = "停止演講監聽";
-        btnIcon.innerText = "🛑";
-      };
 
-      recognition.onresult = (event) => {
-        let interimTranscript = '';
         let finalTranscript = '';
+        let interimTranscript = '';
 
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
@@ -105,112 +80,183 @@
           }
         }
 
-        // 🟢 1. 處理 Web Speech API 【動態暫存跳字】 (體感 0 延遲)
-        if (interimTranscript.trim().length > 0) {
-          if (!currentInterimBlock) {
-            currentInterimBlock = document.createElement('div');
-            currentInterimBlock.className = "bg-slate-100 p-2.5 rounded-xl max-w-[85%] self-start text-xs text-slate-400 italic animate-fade-in";
-            chatBox.appendChild(currentInterimBlock);
-          }
-          currentInterimBlock.innerText = "🎤 " + interimTranscript;
-          chatBox.scrollTop = chatBox.scrollHeight;
+        let cleanFinal = finalTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
+        let cleanInterim = interimTranscript.trim().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?？。，！]/g," ");
+
+        // 🌊 只有當語音確定（Final）時，才塞入穩定的內部存錢筒
+        if (cleanFinal.length > 0) {
+          textBuffer = (textBuffer + " " + cleanFinal).trim().replace(/\s+/g, " ");
         }
 
-        // 🔵 2. 處理 Web Speech API 【語音斷句定稿】 -> 立即丟給 GCP 翻譯
-        if (finalTranscript.trim().length > 0) {
-          if (currentInterimBlock) {
-            currentInterimBlock.remove(); 
-            currentInterimBlock = null;
-          }
+        // 🔒 【關鍵改動】：畫面上「只顯示」已經確定的 Final 文字串，完全不顯示臨時比對的 Interim 文字
+        let stableLiveSpeech = textBuffer;
+
+        // 如果在說話中，但底層還沒釋出任何 Final 節點，stableLiveSpeech 會是空的。
+        // 此時如果 interim 有字，代表使用者正在說話，我們仍要持續刷新「斷句計時器」，但「不更新畫面」，防止跳動！
+        let absoluteLiveText = (textBuffer + " " + cleanInterim).trim().replace(/\s+/g, " ");
+        if (!absoluteLiveText || absoluteLiveText.length === 0) return;
+
+        // 🗣️ 步驟 1：只有在有確定狀態的文字時才更新畫面，否則畫面保持絕對靜止不跳動
+        if (stableLiveSpeech.length > 0) {
+          updateLiveOriginalMessage(stableLiveSpeech);
+        }
+
+        // ⏱️ 0.66秒智慧斷句計時器
+        clearTimeout(cutoffTimer);
+        cutoffTimer = setTimeout(() => {
           
-          // 渲染拍板定案的原文
-          renderOriginalText(finalTranscript);
-          // 秒速發送微小的「純文字」給 GCP Cloud Translation API
-          sendTextToGCPTranslate(finalTranscript, langSelect.value);
-        }
+          // 📸 斷句時，不論有沒有被塞進 Final，我們都擷取這一瞬間最完整的總文字快照
+          let targetText = absoluteLiveText;
+          
+          // 🧠 前綴重疊完全裁切演算法
+          if (lastSentRawText.length > 0) {
+            let maxOverlapLen = 0;
+            let checkLimit = Math.min(lastSentRawText.length, targetText.length);
+
+            for (let i = 1; i <= checkLimit; i++) {
+              let prevChunk = lastSentRawText.substring(0, i).toLowerCase().trim();
+              let nextChunk = targetText.substring(0, i).toLowerCase().trim();
+              if (prevChunk === nextChunk) {
+                maxOverlapLen = i; 
+              } else {
+                break; 
+              }
+            }
+
+            if (maxOverlapLen > 0) {
+              console.log(`[強制切斷重疊] 發現前綴重合 ${maxOverlapLen} 個字元，強制裁切。`);
+              targetText = targetText.substring(maxOverlapLen).trim();
+            }
+          }
+
+          // 防呆：切完如果空了，代表是純重複訊號，直接捨棄不發送
+          if (!targetText || targetText.length === 0) {
+            textBuffer = "";
+            return;
+          }
+
+          // 🔒 更新記憶庫
+          lastSentRawText = absoluteLiveText;
+
+          // 🧹 清空緩衝區，準備迎接步驟 2 的下一段對話
+          textBuffer = "";
+
+          // 定格當前原文 HTML 節點，並補齊最終沒顯示到的剩餘字
+          const liveNode = finalizeLiveMessage(targetText);
+
+          // 步驟 2 & 3：丟給背景平行非同步送翻
+          sendToTranslate(targetText, liveNode);
+
+        }, 660); // 💡 精準縮短至 660 毫秒 = 0.66 秒停頓斷句
       };
 
-      recognition.onerror = (event) => {
-        console.error("Web Speech API 錯誤:", event.error);
+      function sendToTranslate(textToTranslate, targetOriginalNode) {
+        if (!textToTranslate || textToTranslate.trim().length === 0) return;
+
+        const sourceLangShort = langSelect.value.split('-')[0]; 
+        const targetUrl = `${GAS_WEB_APP_URL}?text=${encodeURIComponent(textToTranslate)}&sourceLang=${sourceLangShort}`;
+
+        fetch(targetUrl, {
+          method: "GET",
+          mode: "cors"
+        })
+        .then(res => {
+          if (!res.ok) throw new Error("網路回應不正常");
+          return res.json();
+        })
+        .then(response => {
+          if (response.success) {
+            appendMessageAfterNode(response.translatedText, targetOriginalNode);
+          }
+        })
+        .catch(err => {
+          console.error("背景翻譯失敗:", err);
+        });
+      }
+
+      recognition.onerror = function(event) {
+        console.error("語音辨識發生錯誤: ", event.error);
         if (event.error === 'not-allowed') {
-          alert("請授權麥克風權限以供 Web Speech API 使用。");
-          stopSpeechRecognition();
+          alert("麥克風存取遭拒，請至手機設定中確認瀏覽器麥克風權限已開啟。");
+          stopListening();
         }
       };
 
-      recognition.onend = () => {
-        // 演講防禦：避免長演講時瀏覽器省電或意外斷開，原地自動復活重啟
-        if (isListening) recognition.start();
+      recognition.onend = function() {
+        if (isListening) {
+          try { recognition.start(); } catch(e) { console.log("重啟辨識中..."); }
+        }
       };
-
-      recognition.start();
     }
 
-    function stopSpeechRecognition() {
+    startBtn.addEventListener('click', () => {
+      if (!recognition) return;
+      if (!isListening) { startListening(); } else { stopListening(); }
+    });
+
+    function startListening() {
+      isListening = true;
+      recognition.lang = langSelect.value;
+      textBuffer = ""; 
+      lastSentRawText = ""; 
+      try {
+        recognition.start();
+        startBtn.className = "w-full py-4 bg-red-500 hover:bg-red-600 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
+        btnText.innerText = "正在聆聽、即時翻譯中...";
+        btnIcon.innerText = "🛑";
+      } catch (e) {
+        console.error("啟動辨識失敗:", e);
+      }
+    }
+
+    function stopListening() {
       isListening = false;
-      if (recognition) recognition.stop();
-      statusLabel.innerText = "● 已停止監聽";
-      statusLabel.className = "text-slate-500 font-bold";
-      
+      recognition.stop();
       startBtn.className = "w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg transition duration-200 flex justify-center items-center gap-2 active:scale-98";
-      btnText.innerText = "啟動 Web Speech API 監聽";
+      btnText.innerText = "開始聆聽";
       btnIcon.innerText = "🎙️";
     }
 
-    function sendTextToGCPTranslate(text, lang) {
-      const loadingNode = createLoadingMessage();
-
-      // 發送純文字給後端
-      fetch(GAS_WEB_APP_URL, {
-        method: "POST",
-        body: JSON.stringify({ text: text, sourceLang: lang })
-      })
-      .then(res => res.json())
-      .then(data => {
-        loadingNode.remove();
-        if (data.success) {
-          renderTranslatedText(data.translatedText);
-        } else {
-          renderErrorDialogue("GCP Translation 未回應");
-        }
-      })
-      .catch(err => {
-        loadingNode.remove();
-        renderErrorDialogue("網路連線超時");
-      });
-    }
-
-    function createLoadingMessage() {
-      const wrapper = document.createElement('div');
-      wrapper.className = "space-y-1 w-full animate-pulse";
-      wrapper.innerHTML = `<div class="bg-indigo-100/60 p-2 rounded-lg max-w-[30%] text-xs text-indigo-400">✨ GCP 翻譯中...</div>`;
-      chatBox.appendChild(wrapper);
-      chatBox.scrollTop = chatBox.scrollHeight;
-      return wrapper;
-    }
-
-    function renderOriginalText(text) {
-      const originalDiv = document.createElement('div');
-      originalDiv.className = "bg-slate-100 p-2.5 rounded-xl max-w-[85%] self-start text-xs text-slate-600 font-medium animate-fade-in";
-      originalDiv.innerText = "🎤 " + text;
-      chatBox.appendChild(originalDiv);
+    function updateLiveOriginalMessage(text) {
+      let lastMsg = chatBox.lastElementChild;
+      if (lastMsg && lastMsg.classList.contains('is-live-original')) {
+        lastMsg.innerText = "🗣️ " + text;
+      } else {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-600 animate-fade-in is-live-original";
+        msgDiv.innerText = "🗣️ " + text;
+        chatBox.appendChild(msgDiv);
+      }
       chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    function renderTranslatedText(translatedText) {
-      const translatedDiv = document.createElement('div');
-      translatedDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-3 shadow-xs animate-fade-in";
-      translatedDiv.innerText = "📳 " + translatedText;
-      chatBox.appendChild(translatedDiv);
-      chatBox.scrollTop = chatBox.scrollHeight;
+    function finalizeLiveMessage(finalCleanedText) {
+      let lastMsg = chatBox.lastElementChild;
+      if (lastMsg && lastMsg.classList.contains('is-live-original')) {
+        lastMsg.innerText = "🗣️ " + finalCleanedText; 
+        lastMsg.classList.remove('is-live-original');
+        return lastMsg;
+      } else {
+        // 如果此句此前完全沒觸發 Final 渲染（畫面一片空白），在斷句瞬間直接補建立一個完整乾淨的原文方塊
+        const msgDiv = document.createElement('div');
+        msgDiv.className = "bg-slate-100 p-3 rounded-xl max-w-[85%] self-start text-sm text-slate-600 animate-fade-in";
+        msgDiv.innerText = "🗣️ " + finalCleanedText;
+        chatBox.appendChild(msgDiv);
+        return msgDiv;
+      }
     }
 
-    function renderErrorDialogue(errorMsg) {
-      const errorDiv = document.createElement('div');
-      errorDiv.className = "bg-rose-50 text-rose-700 p-2 rounded-lg max-w-[80%] mx-auto text-xs border border-rose-200 text-center opacity-70";
-      errorDiv.innerText = "⚠️ " + errorMsg;
-      chatBox.appendChild(errorDiv);
-      chatBox.scrollTop = chatBox.scrollHeight;
+    function appendMessageAfterNode(translatedText, originalNode) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = "bg-indigo-50 p-3 rounded-xl max-w-[85%] ml-auto text-base font-semibold text-indigo-950 border border-indigo-100 mt-1 mb-2 shadow-xs animate-fade-in";
+      msgDiv.innerText = "📳 " + translatedText;
+      
+      if (originalNode && originalNode.parentNode) {
+        originalNode.parentNode.insertBefore(msgDiv, originalNode.nextSibling);
+      } else {
+        chatBox.appendChild(msgDiv);
+      }
+      chatBox.scrollTop = chatBox.scrollHeight; 
     }
   </script>
 </body>
